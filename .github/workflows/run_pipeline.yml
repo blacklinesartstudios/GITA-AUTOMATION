@@ -2,7 +2,6 @@
 
 on:
   schedule:
-    # Runs everyday at 00:30 UTC (6:00 AM IST)
     - cron: '30 0 * * *'
   workflow_dispatch:
 
@@ -26,21 +25,26 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
+          pip install --upgrade pip
           pip install -r requirements.txt
 
       - name: Restore token.json
-        if: ${{ env.YOUTUBE_TOKEN_JSON != '' }}
+        if: ${{ secrets.YOUTUBE_TOKEN_JSON != '' }}
         env:
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
         run: |
           python -c "import os; open('token.json', 'w').write(os.environ['YOUTUBE_TOKEN_JSON'])"
 
       - name: Restore token.pickle
-        if: ${{ env.YOUTUBE_TOKEN_PICKLE != '' }}
+        if: ${{ secrets.YOUTUBE_TOKEN_PICKLE != '' }}
         env:
           YOUTUBE_TOKEN_PICKLE: ${{ secrets.YOUTUBE_TOKEN_PICKLE }}
         run: |
           python -c "import os, base64; open('token.pickle', 'wb').write(base64.b64decode(os.environ['YOUTUBE_TOKEN_PICKLE']))"
+
+      - name: Create required folders
+        run: |
+          mkdir -p output outputs cache catch temp
 
       - name: Run MASTER Script
         env:
