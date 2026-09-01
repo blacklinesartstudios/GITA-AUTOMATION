@@ -14,3 +14,4 @@ gTTS
 edge-tts
 python-dotenv
 tqdm
+timm
