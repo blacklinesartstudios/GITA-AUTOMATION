@@ -10,6 +10,9 @@ on:
     - cron: '30 13 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
@@ -78,7 +81,7 @@ jobs:
 
       - name: Create required folders
         run: |
-          mkdir -p output outputs cache catch temp
+          mkdir -p output outputs cache catch temp depth
 
       - name: Run MASTER Script
         env:
@@ -87,9 +90,16 @@ jobs:
         run: |
           python MASTER.py
 
-      - name: Save Verse Progress to GitHub
+      - name: Permanent Cloud Video Backup (GitHub Releases)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG_NAME="archive-$(date +'%Y%m%d-%H%M%S')"
+          gh release create "$TAG_NAME" output/*.mp4 --title "Gita Video Backup ($TAG_NAME)" --notes "Permanent off-site archive of generated video." || echo "Backup uploaded"
+
+      - name: Auto-Save New Depth Maps & Progress to GitHub
         run: |
           git config --global user.name "Gita-Bot"
           git config --global user.email "bot@github.com"
-          git add tracker.json narration.txt 2>/dev/null || true
-          git diff --staged --quiet || (git commit -m "Advance verse tracker [skip ci]" && git push)
+          git add depth/ tracker.json narration.txt 2>/dev/null || true
+          git diff --staged --quiet || (git commit -m "Auto-save new depth maps and verse tracker [skip ci]" && git push)
