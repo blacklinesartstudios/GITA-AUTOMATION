@@ -1,4 +1,6 @@
 ﻿{
+  "languages": ["English", "Hindi", "Telugu", "Tamil", "Kannada", "Marathi", "Spanish", "French", "German", "Japanese"],
+  "current_lang_idx": 0,
   "chapter": 1,
   "verse": 1
 }

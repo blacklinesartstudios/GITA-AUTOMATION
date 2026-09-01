@@ -1,9 +1,13 @@
-﻿name: Autonomous Gita Video Bot
+﻿name: Autonomous Gita Multi-Daily Pipeline
 
 on:
   schedule:
-    # Runs everyday at 00:30 UTC (6:00 AM IST)
+    # 6:00 AM IST (00:30 UTC)
     - cron: '30 0 * * *'
+    # 1:00 PM IST (07:30 UTC)
+    - cron: '30 7 * * *'
+    # 7:00 PM IST (13:30 UTC)
+    - cron: '30 13 * * *'
   workflow_dispatch:
 
 jobs:
@@ -83,9 +87,9 @@ jobs:
         run: |
           python MASTER.py
 
-      - name: Save Verse Progress for Next Day
+      - name: Save Multi-Language Progress to GitHub
         run: |
           git config --global user.name "Gita-Bot"
           git config --global user.email "bot@github.com"
           git add tracker.json narration.txt 2>/dev/null || true
-          git diff --staged --quiet || (git commit -m "Advance verse tracker [skip ci]" && git push)
+          git diff --staged --quiet || (git commit -m "Advance verse & language tracker [skip ci]" && git push)
