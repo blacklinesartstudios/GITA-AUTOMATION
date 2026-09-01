@@ -35,6 +35,15 @@ jobs:
           pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install --no-cache-dir -r requirements.txt
 
+      - name: Pre-trust PyTorch Hub Repositories
+        run: |
+          mkdir -p /home/runner/.cache/torch/hub
+          cat << 'EOF' > /home/runner/.cache/torch/hub/trusted_list
+          intel-isl/MiDaS
+          rwightman/gen-efficientnet-pytorch
+          rwightman_gen-efficientnet-pytorch
+          EOF
+
       - name: Restore YouTube Secrets and Tokens
         env:
           CLIENT_SECRETS_JSON: ${{ secrets.CLIENT_SECRETS_JSON }}
