@@ -1,0 +1,50 @@
+{
+  "project": "Gita YouTube Auto V6",
+  "resolution": [1080, 1920],
+  "fps": 30,
+  "durations": {
+    "intro_duration": 3,
+    "verse_duration": 38,
+    "ending_duration": 3,
+    "image_duration": 6
+  },
+  "animation": {
+    "depth_strength": 0.035,
+    "zoom_strength": 0.055
+  },
+  "folders": {
+    "assets": "assets",
+    "voices": "voices",
+    "music": "music",
+    "output": "output",
+    "cache": "cache"
+  },
+  "audio": {
+    "sample_rate": 48000,
+    "target_lufs": -14.0,
+    "sanskrit_audio_profile": {
+      "voice_id": "hi-IN-MadhurNeural",
+      "rate": "-15%",
+      "pitch": "-3Hz",
+      "bass_gain_db": 5.0,
+      "reverb_wet": 0.28,
+      "gain_db": 0.0
+    },
+    "narration_audio_profile": {
+      "voice_id": "en-US-ChristopherNeural",
+      "rate": "-14%",
+      "pitch": "-2Hz",
+      "bass_gain_db": 5.0,
+      "reverb_wet": 0.28,
+      "gain_db": 0.0
+    }
+  },
+  "verse": {
+    "chapter": 1,
+    "verse_number": 1,
+    "sanskrit": "धर्मक्षेत्रे कुरुक्षेत्रे समवेता युयुत्सवः ।\nमामकाः पाण्डवाश्चैव किमकुर्वत सञ्जय ॥",
+    "transliteration": "dharma-kṣetre kuru-kṣetre samavetā yuyutsavaḥ |\nmāmakāḥ pāṇḍavāś caiva kim akurvata sañjaya ||",
+    "meaning": "On the field of dharma, on the field of Kurukshetra, assembled and eager for battle, what did my sons and the sons of Pandu do, O Sanjaya?",
+    "insight": "The Gita begins with a question arising at the edge of conflict. Before action, there is uncertainty; wisdom begins by seeing the situation clearly."
+  }
+}
