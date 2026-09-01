@@ -1,7 +1,0 @@
-__pycache__/
-venv/
-.env
-token.json
-token.pickle
-client_secrets.json
-*.mp4

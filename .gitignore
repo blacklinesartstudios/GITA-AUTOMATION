@@ -1,0 +1,28 @@
+# Secrets & Credentials
+token.json
+token.pickle
+client_secrets.json
+.env
+
+# Video and Audio files
+*.mp4
+*.mkv
+*.mov
+*.avi
+*.mp3
+*.wav
+
+# Cache, Temporary, and Output Folders
+output/
+outputs/
+cache/
+catch/
+temp/
+tmp/
+__pycache__/
+*.pyc
+
+# Environments
+venv/
+.venv/
+env/
