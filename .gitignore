@@ -4,15 +4,7 @@ token.pickle
 client_secrets.json
 .env
 
-# Video and Audio files
-*.mp4
-*.mkv
-*.mov
-*.avi
-*.mp3
-*.wav
-
-# Cache, Temporary, and Output Folders
+# Cache and Output Folders
 output/
 outputs/
 cache/
@@ -21,8 +13,8 @@ temp/
 tmp/
 __pycache__/
 *.pyc
+*.mp4
 
-# Environments
-venv/
-.venv/
-env/
+# Allow all files inside assets
+!assets/
+!assets/**
