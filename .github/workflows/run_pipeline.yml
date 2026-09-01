@@ -10,6 +10,13 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Free Disk Space on Runner
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+
       - name: Checkout Code
         uses: actions/checkout@v4
 
@@ -25,8 +32,7 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
-          pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install --no-cache-dir -r requirements.txt
 
       - name: Restore YouTube Tokens
         env:
@@ -40,11 +46,11 @@ jobs:
           if json_data:
               with open('token.json', 'w') as f:
                   f.write(json_data)
-              print('Successfully restored token.json')
+              print('Restored token.json')
           if pickle_data:
               with open('token.pickle', 'wb') as f:
                   f.write(base64.b64decode(pickle_data))
-              print('Successfully restored token.pickle')
+              print('Restored token.pickle')
           "
 
       - name: Create required folders
