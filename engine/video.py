@@ -443,7 +443,7 @@ def start_ffmpeg_process(out_path, w, h, fps, encoder_name, fast_mode=False):
         cmd += ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', '-threads', '0']
 
     cmd += ['-pix_fmt', 'yuv420p', str(out_path)]
-    return subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    return subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 def render_master_video(images, out, master_audio_path, bg_music_path=None, w=1080, h=1920, fps=30, cfg_path=None, sans_dur=0.0, eng_dur=0.0, fast_mode=False):
     w, h = 1080, 1920

@@ -20,7 +20,7 @@ def extract_music_wave_average_profile(audio_path: Path, fps: int = 30, smoothin
             ffmpeg_bin(), "-y", "-i", str(audio_path),
             "-f", "s16le", "-ac", "1", "-ar", str(sample_rate), "-"
         ]
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True)
+        proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
         raw_bytes = proc.stdout
 
         samples = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
