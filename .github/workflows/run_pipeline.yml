@@ -2,6 +2,7 @@
 
 on:
   schedule:
+    # Runs everyday at 00:30 UTC (6:00 AM IST)
     - cron: '30 0 * * *'
   workflow_dispatch:
 
@@ -19,6 +20,8 @@ jobs:
 
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -79,3 +82,10 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           python MASTER.py
+
+      - name: Save Verse Progress for Next Day
+        run: |
+          git config --global user.name "Gita-Bot"
+          git config --global user.email "bot@github.com"
+          git add tracker.json narration.txt 2>/dev/null || true
+          git diff --staged --quiet || (git commit -m "Advance verse tracker [skip ci]" && git push)
