@@ -30,8 +30,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
-      - name: Install Python Dependencies
+      - name: Install Python Dependencies (with CPU PyTorch)
         run: |
+          pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
           pip install --no-cache-dir -r requirements.txt
 
       - name: Restore YouTube Tokens
