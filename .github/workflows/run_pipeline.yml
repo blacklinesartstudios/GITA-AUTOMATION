@@ -90,12 +90,6 @@ jobs:
         run: |
           python MASTER.py
 
-      - name: Run YouTube Uploader
-        env:
-          PYTHONUNBUFFERED: "1"
-        run: |
-          python engine/uploader.py
-
       - name: Permanent Cloud Video Backup (GitHub Releases)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
