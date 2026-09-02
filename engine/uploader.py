@@ -130,7 +130,7 @@ def upload_short_to_youtube(
     insight: str,
     project_root: Path,
     music_attribution: str = "",
-    schedule: bool = True
+    schedule: bool = False  # Default changed to False for immediate publish
 ):
     """
     Executes a resumable chunked upload to YouTube with automatic retry on network drops.
@@ -142,13 +142,12 @@ def upload_short_to_youtube(
     youtube = get_authenticated_service(project_root)
     meta = format_shorts_metadata(chapter, verse, sanskrit, meaning, insight, music_attribution)
 
-    # Scheduling settings (Tomorrow 09:00 UTC if schedule=True, else public/private)
     status_body = {
         "selfDeclaredMadeForKids": False
     }
 
     if schedule:
-        # Schedule for next day at 09:30 AM IST (04:00 AM UTC)
+        # Schedule for next day at 09:30 AM IST (04:00 AM UTC) if requested
         publish_time = (
             datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=1)
         ).replace(hour=4, minute=0, second=0, microsecond=0).isoformat()
