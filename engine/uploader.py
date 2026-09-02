@@ -72,29 +72,43 @@ def get_authenticated_service(project_root: Path):
     return build("youtube", "v3", credentials=creds)
 
 def format_shorts_metadata(chapter: int, verse: int, sanskrit: str, meaning: str, insight: str, music_attribution: str = "") -> dict:
-    title = f"Gita Wisdom: Ch {chapter}, Verse {verse} | Divine Message #Shorts"
-    if len(title) > 100:
-        title = title[:97] + "..."
+    """
+    Constructs high-ranking search-optimized metadata for YouTube Shorts 
+    with front-loaded keywords and structured search intent.
+    """
+    # Optimized title under 60 characters with front-loaded search intent
+    title = f"Gita Ch {chapter}, Verse {verse}: Daily Wisdom #Shorts"
+    if len(title) > 60:
+        title = f"Gita Wisdom Ch {chapter}.{verse} #Shorts"
 
+    # Search-optimized description with primary keyword front-loaded in the opening hook
     description_lines = [
+        f"Unlock timeless wisdom with Bhagavad Gita Chapter {chapter}, Verse {verse}. Discover how Lord Krishna's teachings apply to modern life.",
+        f"",
         f"॥ श्रीमद्भगवद्गीता ॥",
-        f"Chapter {chapter}, Verse {verse}\n",
+        f"Chapter {chapter}, Verse {verse}",
+        f"",
         f"📜 SANSKRIT VERSE:",
-        f"{sanskrit}\n",
+        f"{sanskrit}",
+        f"",
         f"📖 MEANING:",
-        f"{meaning}\n",
-        f"💡 THE MOMENT (PRACTICAL INSIGHT):",
-        f"{insight}\n",
+        f"{meaning}",
+        f"",
+        f"💡 PRACTICAL INSIGHT:",
+        f"{insight}",
+        f"",
         f"--------------------------------------------------",
         f"Studio Master: BLACKLINES ART STUDIO",
         f"Creator & Sound Design: Venkatesh Marturu",
         f"Copyright: © 2026 BLACKLINES ART STUDIO. All rights reserved.",
         f"Audio License: {music_attribution if music_attribution else 'Original Composition / FlowMusic AI'}",
-        f"--------------------------------------------------\n",
-        f"#BhagavadGita #Krishna #Shorts #DailyWisdom #Spirituality #Hinduism #Geeta #Mindfulness"
+        f"--------------------------------------------------",
+        f"",
+        f"#BhagavadGita #Krishna #Shorts #DailyWisdom #Spirituality #Hinduism #Geeta"
     ]
     description = "\n".join(description_lines)
 
+    # High-impact search tags
     tags = [
         "Bhagavad Gita",
         f"Bhagavad Gita Chapter {chapter}",
