@@ -94,7 +94,7 @@ jobs:
         env:
           PYTHONUNBUFFERED: "1"
         run: |
-          python uploader.py
+          python engine/uploader.py
 
       - name: Permanent Cloud Video Backup (GitHub Releases)
         env:
