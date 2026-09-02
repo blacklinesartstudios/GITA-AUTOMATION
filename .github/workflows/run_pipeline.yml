@@ -1,4 +1,4 @@
-﻿name: Bhagavad Gita YouTube Automation
+name: Bhagavad Gita YouTube Automation
 
 on:
   schedule:
@@ -89,6 +89,12 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: |
           python MASTER.py
+
+      - name: Run YouTube Uploader
+        env:
+          PYTHONUNBUFFERED: "1"
+        run: |
+          python uploader.py
 
       - name: Permanent Cloud Video Backup (GitHub Releases)
         env:
