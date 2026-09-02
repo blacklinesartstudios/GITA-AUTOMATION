@@ -115,7 +115,7 @@ def run_pipeline(root: Path, cfg: dict | None = None, fast_mode: bool = False):
                 insight=insight_txt,
                 project_root=root,
                 music_attribution=music_attribution,
-                schedule=True,
+                schedule=False,
             )
             print("  ✓ Video successfully uploaded & scheduled to YouTube!")
         except Exception as e:
