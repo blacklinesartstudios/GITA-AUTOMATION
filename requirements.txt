@@ -4,6 +4,7 @@ google-auth-oauthlib
 google-auth-httplib2
 pillow
 opencv-python-headless
+onnxruntime
 requests
 numpy
 scipy
