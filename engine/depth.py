@@ -17,6 +17,9 @@ def make_depth(img_path, depth_path):
     img_path = Path(img_path)
     depth_path = Path(depth_path)
     
+    # Ensure output directory exists to prevent file-not-found write errors
+    depth_path.parent.mkdir(parents=True, exist_ok=True)
+    
     print(f"  [3D] Synthesizing Studio-Grade Depth for {img_path.name}...")
     try:
         model_file = hf_hub_download(
@@ -29,6 +32,7 @@ def make_depth(img_path, depth_path):
 
     img = cv2.imread(str(img_path))
     if img is None:
+        print(f"  [ERROR] Could not read image at {img_path}")
         return
         
     img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -51,7 +55,7 @@ def make_depth(img_path, depth_path):
     depth_map = session.run(None, {input_name: img_norm})[0]
     depth_map = np.squeeze(depth_map)
     
-    # CUBIC interpolation upscaling maintains the smooth edge gradients
+    # CUBIC interpolation upscaling maintains smooth edge gradients
     depth_map = cv2.resize(depth_map, (orig_w, orig_h), interpolation=cv2.INTER_CUBIC)
     
     depth_min, depth_max = depth_map.min(), depth_map.max()
@@ -60,9 +64,18 @@ def make_depth(img_path, depth_path):
     else:
         depth_norm = depth_map
         
+    # --- ENHANCED DEPTH CONTRAST ADJUSTMENT ---
+    gamma = 1.4  
+    depth_norm = np.power(depth_norm, gamma)
+    
+    p_low, p_high = np.percentile(depth_norm, (5, 95))
+    depth_norm = np.clip((depth_norm - p_low) / (p_high - p_low + 1e-5), 0, 1)
+    # -------------------------------------------
+        
     depth_img = (depth_norm * 255.0).astype(np.uint8)
     
-    # Light bilateral smoothing to denoise the depth without blurring the sharp edges
+    # Light bilateral smoothing to denoise the depth without blurring sharp edges
     depth_clean = cv2.bilateralFilter(depth_img, d=7, sigmaColor=50, sigmaSpace=50)
 
     cv2.imwrite(str(depth_path), depth_clean)
+    print(f"  ✓ High-contrast depth map saved successfully to: {depth_path.name}")
