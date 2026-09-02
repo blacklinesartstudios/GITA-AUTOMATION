@@ -1,7 +1,6 @@
 import os
 import sys
 import time
-import json
 import random
 import datetime
 from pathlib import Path
@@ -21,6 +20,7 @@ SCOPES = [
 def get_authenticated_service(project_root: Path):
     """
     Handles OAuth 2.0 authentication with persistent token caching and auto-refresh.
+    Fails safely with a descriptive error if running in headless CI without valid tokens.
     """
     project_root = Path(project_root).resolve()
     token_path = project_root / "token.json"
@@ -38,13 +38,15 @@ def get_authenticated_service(project_root: Path):
 
     creds = None
 
+    # 1. Load cached token if available
     if token_path.exists():
         try:
             creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
         except Exception as e:
-            print(f"  [AUTH] Could not parse existing token.json ({e}). Re-authenticating...")
+            print(f"  [AUTH] Could not parse existing token.json ({e}).")
             creds = None
 
+    # 2. Check validity or refresh token
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             print("  [AUTH] Access token expired. Refreshing token via OAuth refresh flow...")
@@ -52,23 +54,29 @@ def get_authenticated_service(project_root: Path):
                 creds.refresh(Request())
                 print("  [AUTH] Token successfully refreshed!")
             except Exception as e:
-                print(f"  [AUTH] Token refresh failed ({e}). Starting fresh authentication flow...")
+                print(f"  [AUTH] Token refresh failed ({e}).")
                 creds = None
 
         if not creds:
+            # Check if running inside GitHub Actions / Headless CI environment
+            if os.getenv("CI") or os.getenv("GITHUB_ACTIONS"):
+                raise RuntimeError(
+                    "  [AUTH ERROR] Interactive browser authentication cannot run in headless CI. "
+                    "Your YOUTUBE_TOKEN_JSON secret is missing, invalid, or lacks a refresh_token. "
+                    "Please generate a valid token.json locally and update your GitHub Secret."
+                )
+            
             print("  [AUTH] Launching local browser server for one-time YouTube OAuth authorization...")
             flow = InstalledAppFlow.from_client_secrets_file(str(client_secrets_path), SCOPES)
             creds = flow.run_local_server(port=0)
 
+        # 3. Persist refreshed/new token to disk
         token_path.write_text(creds.to_json(), encoding="utf-8")
         print(f"  [AUTH] Credentials cached successfully to {token_path.name}")
 
     return build("youtube", "v3", credentials=creds)
 
 def format_shorts_metadata(chapter: int, verse: int, sanskrit: str, meaning: str, insight: str, music_attribution: str = "") -> dict:
-    """
-    Constructs high-engagement title, description, and tags for YouTube Shorts.
-    """
     title = f"Gita Wisdom: Ch {chapter}, Verse {verse} | Divine Message #Shorts"
     if len(title) > 100:
         title = title[:97] + "..."
@@ -123,9 +131,6 @@ def upload_short_to_youtube(
     music_attribution: str = "",
     schedule: bool = False
 ):
-    """
-    Executes a resumable chunked upload to YouTube with automatic retry.
-    """
     video_path = Path(video_path).resolve()
     if not video_path.exists():
         raise FileNotFoundError(f"Video file not found at: {video_path}")
