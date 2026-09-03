@@ -73,11 +73,6 @@ class AudioResult(str):
         return str(self.path)
 
 def mix_full_soundtrack(*args, **kwargs):
-    """
-    Universal dispatcher:
-    Handles either 1 positional argument (verse / config dict)
-    or 4 positional arguments (sanskrit_audio, narration_audio, bgm_audio, output_path).
-    """
     cache_dir = Path("cache")
     cache_dir.mkdir(parents=True, exist_ok=True)
 
@@ -87,7 +82,6 @@ def mix_full_soundtrack(*args, **kwargs):
         bgm_path = Path(args[2]) if args[2] and Path(args[2]).exists() else None
         output_path = Path(args[3])
     else:
-        # Called via mix_full_soundtrack(verse) or mix_full_soundtrack(config)
         first_arg = args[0] if len(args) > 0 else kwargs.get("verse", {})
         
         verse = {}
@@ -101,7 +95,6 @@ def mix_full_soundtrack(*args, **kwargs):
         insight_text = verse.get("insight", "")
         narration_text = f"{meaning_text} {insight_text}".strip()
 
-        # Load voice config defaults
         sanskrit_voice = "hi-IN-MadhurNeural"
         narration_voice = "en-US-ChristopherNeural"
         s_rate, s_pitch = "-15%", "-3Hz"
@@ -132,7 +125,6 @@ def mix_full_soundtrack(*args, **kwargs):
         print("  [AUDIO] Synthesizing philosophical narration (Christopher Neural)...")
         synthesize_voice(narration_text, narration_voice, n_rate, n_pitch, narration_path)
 
-        # Locate BGM track
         bgm_path = None
         for candidate_dir in [Path("assets/music"), Path("assets"), Path("music")]:
             if candidate_dir.exists():
@@ -144,30 +136,31 @@ def mix_full_soundtrack(*args, **kwargs):
     sanskrit_dur = get_audio_duration(sanskrit_path)
     narration_dur = get_audio_duration(narration_path)
 
-    # Delay narration until chant completes + 1.2s gap
     narration_delay_ms = int((sanskrit_dur + 1.2) * 1000)
     speech_total = (narration_delay_ms / 1000.0) + narration_dur
     total_duration = max(speech_total + 4.0, 64.0)
+
+    fade_out_start = max(0.0, total_duration - 3.0)
 
     inputs = ["-i", str(sanskrit_path), "-i", str(narration_path)]
     if bgm_path and bgm_path.exists():
         inputs += ["-stream_loop", "-1", "-i", str(bgm_path)]
         filter_complex = (
-            f"[0:a]volume=1.0,equalizer=f=120:width_type=o:w=1:g=4,apad=whole_dur={total_duration}[sanskrit];"
-            f"[1:a]volume=1.1,equalizer=f=120:width_type=o:w=1:g=3,adelay={narration_delay_ms}|{narration_delay_ms},"
+            f"[0:a]volume=1.0,apad=whole_dur={total_duration}[sanskrit];"
+            f"[1:a]volume=1.1,adelay={narration_delay_ms}|{narration_delay_ms},"
             f"apad=whole_dur={total_duration}[narration];"
-            f"[sanskrit][narration]amix=inputs=2:dropout_transition=0:weights=1 1[voice];"
-            f"[2:a]volume=0.20,aloop=loop=-1:size=2e+09,atrim=0:{total_duration},"
-            f"afade=t=in:st=0:d=2.0,afade=t=out:st={total_duration - 3.0}:d=3.0[bgm];"
-            f"[voice][bgm]amix=inputs=2:dropout_transition=0:weights=1 1,"
+            f"[sanskrit][narration]amix=inputs=2:dropout_transition=0[voice];"
+            f"[2:a]volume=0.20,atrim=0:{total_duration},"
+            f"afade=t=in:st=0:d=2.0,afade=t=out:st={fade_out_start}:d=3.0[bgm];"
+            f"[voice][bgm]amix=inputs=2:dropout_transition=0,"
             f"loudnorm=I=-14.0:TP=-1.5:LRA=11[out]"
         )
     else:
         filter_complex = (
-            f"[0:a]volume=1.0,equalizer=f=120:width_type=o:w=1:g=4,apad=whole_dur={total_duration}[sanskrit];"
-            f"[1:a]volume=1.1,equalizer=f=120:width_type=o:w=1:g=3,adelay={narration_delay_ms}|{narration_delay_ms},"
+            f"[0:a]volume=1.0,apad=whole_dur={total_duration}[sanskrit];"
+            f"[1:a]volume=1.1,adelay={narration_delay_ms}|{narration_delay_ms},"
             f"apad=whole_dur={total_duration}[narration];"
-            f"[sanskrit][narration]amix=inputs=2:dropout_transition=0:weights=1 1,"
+            f"[sanskrit][narration]amix=inputs=2:dropout_transition=0,"
             f"loudnorm=I=-14.0:TP=-1.5:LRA=11[out]"
         )
 
