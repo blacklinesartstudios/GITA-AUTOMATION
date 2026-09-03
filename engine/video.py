@@ -25,10 +25,10 @@ _TORCH_DEVICE = None
 
 
 # =====================================================================
-# 1. 3D DEPTH MAP ENGINES (ONNX Depth Anything v2 + PyTorch MiDaS)
+# 1. 3D DEPTH MAP ENGINE WITH PERSISTENT CACHING
 # =====================================================================
 
-def get_midas_model(model_type="MiDaS_small"):
+def get_midAS_model(model_type="MiDaS_small"):
     global _MIDAS_MODEL, _MIDAS_TRANSFORMS, _TORCH_DEVICE
     if torch is None:
         return None, None, None
@@ -49,7 +49,16 @@ def generate_and_save_depth_map(img_input, target_depth_path: Path) -> np.ndarra
     target_depth_path = Path(target_depth_path)
     target_depth_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Option A: Primary High-Contrast Depth Anything v2 (ONNX)
+    # Cache Check: Reuse existing depth maps to minimize CPU load
+    if target_depth_path.exists() and target_depth_path.stat().st_size > 1024:
+        depth_cached = cv2.imread(str(target_depth_path), cv2.IMREAD_GRAYSCALE)
+        if depth_cached is not None and depth_cached.shape[0] > 100:
+            print(f"  [DEPTH CACHE HIT] Reusing cached depth map: {target_depth_path.name}")
+            return depth_cached
+
+    print(f"  [DEPTH COMPUTE] Generating new depth map: {target_depth_path.name}...")
+
+    # Option A: ONNX Depth Anything v2
     try:
         from engine.depth import make_depth
         if isinstance(img_input, (str, Path)) and Path(img_input).exists():
@@ -68,14 +77,14 @@ def generate_and_save_depth_map(img_input, target_depth_path: Path) -> np.ndarra
     except Exception as e:
         print(f"  [DEPTH] ONNX Depth-Anything fallback to MiDaS: {e}")
 
-    # Option B: Secondary Neural Fallback (PyTorch MiDaS)
+    # Option B: PyTorch MiDaS fallback
     img_bgr = img_input if isinstance(img_input, np.ndarray) else cv2.imread(str(img_input))
     if img_bgr is None:
         fallback_map = np.full((1920, 1080), 128, dtype=np.uint8)
         cv2.imwrite(str(target_depth_path), fallback_map)
         return fallback_map
 
-    model, transform, device = get_midas_model("MiDaS_small")
+    model, transform, device = get_midAS_model("MiDaS_small")
     if model is not None:
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         input_batch = transform(img_rgb).to(device)
@@ -97,14 +106,13 @@ def generate_and_save_depth_map(img_input, target_depth_path: Path) -> np.ndarra
         cv2.imwrite(str(target_depth_path), depth_u8)
         return depth_u8
 
-    # Option C: Neutral flat gradient fallback
     fallback_map = np.full(img_bgr.shape[:2], 128, dtype=np.uint8)
     cv2.imwrite(str(target_depth_path), fallback_map)
     return fallback_map
 
 
 # =====================================================================
-# 2. MULTILINGUAL TYPOGRAPHY & ASSET MANAGER
+# 2. INDIC TYPOGRAPHY & LIGATURE-SAFE RENDERER
 # =====================================================================
 
 def convert_to_devanagari_num(text_str: str) -> str:
@@ -138,7 +146,7 @@ LAYOUT = {
     "bottom_safe_area": 140
 }
 
-SHINE_DURATION = 0.22
+SHINE_DURATION = 0.26
 GOLD_SHINE = (255, 245, 160, 255)
 GOLD_GLOW_BACK = (255, 215, 0, 180)
 
@@ -165,6 +173,7 @@ def load_font(preferred_names, size, assets_dir=None, root_dir=None):
     dirs_to_check.extend([
         Path("/usr/share/fonts/truetype/dejavu"),
         Path("/usr/share/fonts/truetype/freefont"),
+        Path("/usr/share/fonts/truetype/noto"),
         Path("/usr/share/fonts"),
         Path(r"C:\Windows\Fonts")
     ])
@@ -194,10 +203,6 @@ def load_font(preferred_names, size, assets_dir=None, root_dir=None):
 
     return ImageFont.load_default()
 
-
-# =====================================================================
-# 3. GRAPHICS, KARAOKE & TEXT LAYOUT
-# =====================================================================
 
 def wrap_text_to_width(text, font, max_width, draw):
     if isinstance(text, list):
@@ -244,8 +249,11 @@ def measure_lines_height(draw, lines, font, line_spacing):
     return total_h, heights
 
 
-def compute_char_layout(lines, start_y, heights, line_spacing, font, draw, canvas_width=1080):
-    chars_info = []
+def compute_word_layout(lines, start_y, heights, line_spacing, font, draw, canvas_width=1080):
+    """
+    Computes text layouts word-by-word to preserve Devanagari ligatures (क्ष, त्र, ज्ञ, र्).
+    """
+    words_info = []
     cur_y = start_y
     for i, line in enumerate(lines):
         if not line:
@@ -254,14 +262,45 @@ def compute_char_layout(lines, start_y, heights, line_spacing, font, draw, canva
         line_bbox = draw.textbbox((0, 0), line, font=font)
         line_w = line_bbox[2] - line_bbox[0]
         start_x = (canvas_width - line_w) // 2
-        running_text = ""
-        for ch in line:
-            prefix_bbox = draw.textbbox((0, 0), running_text, font=font) if running_text else (0, 0, 0, 0)
+
+        words = line.split(" ")
+        running_prefix = ""
+        for word in words:
+            if not word:
+                continue
+            prefix_bbox = draw.textbbox((0, 0), running_prefix, font=font) if running_prefix else (0, 0, 0, 0)
             prefix_w = prefix_bbox[2] - prefix_bbox[0]
-            chars_info.append({"char": ch, "pos": (start_x + prefix_w, cur_y)})
-            running_text += ch
+            words_info.append({"word": word, "pos": (start_x + prefix_w, cur_y)})
+            running_prefix += word + " "
         cur_y += heights[i] + line_spacing
-    return chars_info
+    return words_info
+
+
+def calculate_word_times(words, start_t, end_t):
+    if not words:
+        return []
+    weights = [3.5 if item["word"].endswith(("।", "॥", ".")) else 1.0 for item in words]
+    total_w = sum(weights)
+    total_d = max(0.1, end_t - start_t)
+    timed, cur_t = [], start_t
+    for idx, item in enumerate(words):
+        timed.append({"word": item["word"], "pos": item["pos"], "appear_t": cur_t})
+        cur_t += (weights[idx] / total_w) * total_d
+    return timed
+
+
+def render_karaoke_words(draw_ctx, timed_words, current_t, font, normal_color):
+    """Renders whole words with a golden shine transition without breaking matras."""
+    for item in timed_words:
+        if current_t >= item["appear_t"]:
+            time_alive = current_t - item["appear_t"]
+            x, y = item["pos"]
+            if time_alive < SHINE_DURATION:
+                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                    draw_ctx.text((x + dx, y + dy), item["word"], font=font, fill=GOLD_GLOW_BACK)
+                draw_ctx.text((x, y), item["word"], font=font, fill=GOLD_SHINE)
+            else:
+                draw_ctx.text((x, y), item["word"], font=font, fill=normal_color)
 
 
 def draw_golden_lotus(draw, center_x, center_y, scale=1.0, gold_bright=(255, 230, 140, 255), gold_main=(212, 175, 86, 255), gold_dark=(140, 105, 45, 255)):
@@ -319,32 +358,6 @@ def draw_3d_header(canvas_img, y_title, y_sub, title_text, sub_text, f_title, f_
     main_draw.text((s_x, y_sub), sub_text, font=f_sub, fill=gold_color, stroke_width=1, stroke_fill=(20, 20, 20, 230))
     main_draw.line([(s_x - 110, y_sub + 16), (s_x - 16, y_sub + 16)], fill=gold_color, width=2)
     main_draw.line([(s_x + s_w + 16, y_sub + 16), (s_x + s_w + 110, y_sub + 16)], fill=gold_color, width=2)
-
-
-def calculate_char_times(chars, start_t, end_t):
-    if not chars:
-        return []
-    weights = [5.0 if item["char"] in ("।", "॥", ".", "\n") else (1.8 if item["char"] == " " else 1.0) for item in chars]
-    total_w = sum(weights)
-    total_d = max(0.1, end_t - start_t)
-    timed, cur_t = [], start_t
-    for idx, item in enumerate(chars):
-        timed.append({"char": item["char"], "pos": item["pos"], "appear_t": cur_t})
-        cur_t += (weights[idx] / total_w) * total_d
-    return timed
-
-
-def render_karaoke_chars(draw_ctx, timed_chars, current_t, font, normal_color):
-    for item in timed_chars:
-        if current_t >= item["appear_t"]:
-            time_alive = current_t - item["appear_t"]
-            x, y = item["pos"]
-            if time_alive < SHINE_DURATION:
-                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                    draw_ctx.text((x + dx, y + dy), item["char"], font=font, fill=GOLD_GLOW_BACK)
-                draw_ctx.text((x, y), item["char"], font=font, fill=GOLD_SHINE)
-            else:
-                draw_ctx.text((x, y), item["char"], font=font, fill=normal_color)
 
 
 def rgba_to_bgr_and_alpha(pil_img):
@@ -444,17 +457,17 @@ def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_au
         box3_bot += shift
 
     sk_start_y = box1_top + PAD_Y + badge_top_h + 22
-    sanskrit_chars_layout = compute_char_layout(sanskrit_lines, sk_start_y, sk_heights, LAYOUT["sanskrit_line_spacing"], f_sanskrit, d_m, canvas_width=w)
+    sanskrit_words_layout = compute_word_layout(sanskrit_lines, sk_start_y, sk_heights, LAYOUT["sanskrit_line_spacing"], f_sanskrit, d_m, canvas_width=w)
     mean_start_y = box2_top + PAD_Y + m_hd_h + 18
-    meaning_chars_layout = compute_char_layout(meaning_lines, mean_start_y, mean_heights, LAYOUT["meaning_line_spacing"], f_meaning, d_m, canvas_width=w)
-    moment_chars_layout = compute_char_layout(moment_lines, box3_top + PAD_Y + mom_hd_h + 18, mom_heights, LAYOUT["moment_line_spacing"], f_moment, d_m, canvas_width=w) if moment_lines else []
+    meaning_words_layout = compute_word_layout(meaning_lines, mean_start_y, mean_heights, LAYOUT["meaning_line_spacing"], f_meaning, d_m, canvas_width=w)
+    moment_words_layout = compute_word_layout(moment_lines, box3_top + PAD_Y + mom_hd_h + 18, mom_heights, LAYOUT["moment_line_spacing"], f_moment, d_m, canvas_width=w) if moment_lines else []
 
     sanskrit_voice_start = 3.5
     sanskrit_voice_end = sanskrit_voice_start + max(4.0, sans_dur)
     narration_voice_start = sanskrit_voice_end + 1.6
 
-    len_mean = max(1, len(meaning_chars_layout))
-    len_mom = len(moment_chars_layout)
+    len_mean = max(1, len(meaning_words_layout))
+    len_mom = len(moment_words_layout)
     tot_c = len_mean + len_mom
     actual_eng = max(6.0, eng_dur)
     meaning_voice_end = narration_voice_start + (actual_eng * (len_mean / float(tot_c))) if len_mom > 0 else (narration_voice_start + actual_eng)
@@ -509,14 +522,14 @@ def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_au
         "t_box2_fade_in": (sanskrit_voice_end + 0.4, sanskrit_voice_end + 1.4),
         "t_box3_fade_in": (meaning_voice_end + 0.4, meaning_voice_end + 1.4),
         "global_ui_fade_out": (max(moment_voice_end + 1.5, total_audio_duration - 3.5), total_audio_duration - 1.2),
-        "timed_sanskrit_chars": calculate_char_times(sanskrit_chars_layout, sanskrit_voice_start, sanskrit_voice_end),
-        "timed_meaning_chars": calculate_char_times(meaning_chars_layout, narration_voice_start, meaning_voice_end),
-        "timed_moment_chars": calculate_char_times(moment_chars_layout, moment_voice_start, moment_voice_end)
+        "timed_sanskrit_words": calculate_word_times(sanskrit_words_layout, sanskrit_voice_start, sanskrit_voice_end),
+        "timed_meaning_words": calculate_word_times(meaning_words_layout, narration_voice_start, meaning_voice_end),
+        "timed_moment_words": calculate_word_times(moment_words_layout, moment_voice_start, moment_voice_end)
     }
 
 
 # =====================================================================
-# 4. FFMPEG ENCODING ENGINE & HARDWARE DETECTOR
+# 3. FAST ENCODING & RENDERING ENGINE
 # =====================================================================
 
 def ffmpeg():
@@ -591,10 +604,6 @@ def start_ffmpeg_process(out_path, w, h, fps, encoder_name, fast_mode=False):
     cmd += ['-pix_fmt', 'yuv420p', str(out_path)]
     return subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-
-# =====================================================================
-# 5. MASTER 3D PARALLAX RENDERING LOOP
-# =====================================================================
 
 def render_master_video(images, out, master_audio_path, bg_music_path=None, w=1080, h=1920, fps=30, cfg_path=None, sans_dur=0.0, eng_dur=0.0, fast_mode=False):
     w, h = 1080, 1920
@@ -753,9 +762,9 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
 
                     text_overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
                     d_txt = ImageDraw.Draw(text_overlay)
-                    render_karaoke_chars(d_txt, ui["timed_sanskrit_chars"], current_time_sec, ui["f_sanskrit"], ui["CREAM_WHITE"])
-                    render_karaoke_chars(d_txt, ui["timed_meaning_chars"], current_time_sec, ui["f_meaning"], ui["BODY_WHITE"])
-                    render_karaoke_chars(d_txt, ui["timed_moment_chars"], current_time_sec, ui["f_moment"], ui["BODY_WHITE"])
+                    render_karaoke_words(d_txt, ui["timed_sanskrit_words"], current_time_sec, ui["f_sanskrit"], ui["CREAM_WHITE"])
+                    render_karaoke_words(d_txt, ui["timed_meaning_words"], current_time_sec, ui["f_meaning"], ui["BODY_WHITE"])
+                    render_karaoke_words(d_txt, ui["timed_moment_words"], current_time_sec, ui["f_moment"], ui["BODY_WHITE"])
 
                     txt_np = np.array(text_overlay)
                     txt_bgr = cv2.cvtColor(txt_np, cv2.COLOR_RGBA2BGR).astype(np.float32)
@@ -802,7 +811,7 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
 
 
 # =====================================================================
-# 6. STUDIO MASTER MUXER (NON-BLOCKING HEADLESS)
+# 4. HEADLESS STUDIO MASTER MUXER
 # =====================================================================
 
 def mux(video, audio, out, chapter=1, verse=1):
