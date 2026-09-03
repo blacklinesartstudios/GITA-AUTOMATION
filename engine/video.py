@@ -255,26 +255,31 @@ def measure_lines_height(draw, lines, font, line_spacing):
     return total_h, heights
 
 def compute_char_layout(lines, start_y, heights, line_spacing, font, draw, canvas_width=1080):
-    chars_info = []
+    words_info = []
     cur_y = start_y
     for i, line in enumerate(lines):
         if not line:
             cur_y += heights[i] + line_spacing
             continue
+            
+        # Split line into words to maintain correct Devanagari matra shaping
+        words = line.split(" ")
         line_bbox = draw.textbbox((0, 0), line, font=font)
         line_w = line_bbox[2] - line_bbox[0]
         start_x = (canvas_width - line_w) // 2
-        running_text = ""
         
-        # Strictly character-by-character iteration for smooth letter flow
-        for ch in line:
-            prefix_bbox = draw.textbbox((0, 0), running_text, font=font) if running_text else (0, 0, 0, 0)
-            prefix_w = prefix_bbox[2] - prefix_bbox[0]
-            chars_info.append({"char": ch, "pos": (start_x + prefix_w, cur_y)})
-            running_text += ch
+        current_x = start_x
+        for word in words:
+            word_str = word + " "
+            word_bbox = draw.textbbox((0, 0), word_str, font=font)
+            word_w = word_bbox[2] - word_bbox[0]
+            
+            # Treat each word as an atomic unit so font shaping stays pristine
+            words_info.append({"char": word_str, "pos": (current_x, cur_y)})
+            current_x += word_w
             
         cur_y += heights[i] + line_spacing
-    return chars_info
+    return words_info
 def draw_golden_lotus(draw, center_x, center_y, scale=1.0, gold_bright=(255, 230, 140, 255), gold_main=(212, 175, 86, 255), gold_dark=(140, 105, 45, 255)):
     cx, cy = center_x, center_y
     r_aura = int(24 * scale)
