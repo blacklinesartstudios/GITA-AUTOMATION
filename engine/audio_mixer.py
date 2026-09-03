@@ -7,7 +7,7 @@ import asyncio
 import wave
 from pathlib import Path
 
-UNIFIED_VOICE = "hi-IN-MadhurNeural"
+CHANT_VOICE = "hi-IN-MadhurNeural"
 
 def ffmpeg_bin():
     return shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
@@ -75,17 +75,18 @@ def generate_voices(render_cfg_path: str, project_root: Path):
     meaning_txt = verse.get("meaning", "").strip()
     insight_txt = verse.get("insight", "").strip()
     clean_narration = f"{meaning_txt} ... ... {insight_txt}"
+    narration_voice = cfg.get("narration_voice", CHANT_VOICE)
 
     sans_raw_wav = cache / "sanskrit_raw.wav"
     sans_proc_wav = cache / "sanskrit_processed.wav"
     narr_raw_wav = cache / "narration_raw.wav"
     narr_proc_wav = cache / "narration_processed.wav"
 
-    asyncio.run(generate_edge_tts(sanskrit_txt, UNIFIED_VOICE, sans_raw_wav, rate="-12%", pitch="-4Hz"))
+    asyncio.run(generate_edge_tts(sanskrit_txt, CHANT_VOICE, sans_raw_wav, rate="-12%", pitch="-4Hz"))
     if sans_raw_wav.exists() and get_audio_duration_sec(sans_raw_wav) > 0.5:
         process_voice_dsp(sans_raw_wav, sans_proc_wav, is_chant=True)
 
-    asyncio.run(generate_edge_tts(clean_narration, UNIFIED_VOICE, narr_raw_wav, rate="-6%", pitch="-2Hz"))
+    asyncio.run(generate_edge_tts(clean_narration, narration_voice, narr_raw_wav, rate="-6%", pitch="-2Hz"))
     if narr_raw_wav.exists() and get_audio_duration_sec(narr_raw_wav) > 1.0:
         process_voice_dsp(narr_raw_wav, narr_proc_wav, is_chant=False)
 
