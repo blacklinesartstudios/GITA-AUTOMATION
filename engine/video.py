@@ -265,7 +265,7 @@ def compute_char_layout(lines, start_y, heights, line_spacing, font, draw, canva
         line_w = line_bbox[2] - line_bbox[0]
         start_x = (canvas_width - line_w) // 2
         running_text = ""
-        for ch in line:
+        for ch in line.split(" "):
             prefix_bbox = draw.textbbox((0, 0), running_text, font=font) if running_text else (0, 0, 0, 0)
             prefix_w = prefix_bbox[2] - prefix_bbox[0]
             chars_info.append({"char": ch, "pos": (start_x + prefix_w, cur_y)})
