@@ -1,8 +1,8 @@
+import sys
+import subprocess
+from pathlib import Path
 import cv2
 import numpy as np
-from pathlib import Path
-import subprocess
-import sys
 
 try:
     import onnxruntime as ort
@@ -13,21 +13,31 @@ except ImportError:
     import onnxruntime as ort
     from huggingface_hub import hf_hub_download
 
-def make_depth(img_path, depth_path):
-    img_path = Path(img_path)
-    depth_path = Path(depth_path)
-    
-    # Ensure output directory exists to prevent file-not-found write errors
-    depth_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    print(f"  [3D] Synthesizing Studio-Grade Depth for {img_path.name}...")
-    try:
+# Global cache so the model loads only once per execution
+_MODEL_SESSION = None
+_INPUT_NAME = None
+
+def get_depth_session():
+    global _MODEL_SESSION, _INPUT_NAME
+    if _MODEL_SESSION is None:
         model_file = hf_hub_download(
             repo_id="yuvraj108c/Depth-Anything-2-Onnx", 
             filename="depth_anything_v2_vits.onnx"
         )
+        _MODEL_SESSION = ort.InferenceSession(model_file, providers=['CPUExecutionProvider'])
+        _INPUT_NAME = _MODEL_SESSION.get_inputs()[0].name
+    return _MODEL_SESSION, _INPUT_NAME
+
+def make_depth(img_path: Path, depth_path: Path):
+    img_path = Path(img_path)
+    depth_path = Path(depth_path)
+    depth_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    print(f"  [3D] Synthesizing Studio-Grade Depth for {img_path.name}...")
+    try:
+        session, input_name = get_depth_session()
     except Exception as e:
-        print(f"  [ERROR] AI download failed: {e}")
+        print(f"  [ERROR] AI depth model load failed: {e}")
         return
 
     img = cv2.imread(str(img_path))
@@ -39,7 +49,6 @@ def make_depth(img_path, depth_path):
     orig_h, orig_w = img_rgb.shape[:2]
 
     target_size = 518
-    # CUBIC interpolation prevents jagged stair-stepping on edges
     img_resized = cv2.resize(img_rgb, (target_size, target_size), interpolation=cv2.INTER_CUBIC)
     
     img_norm = img_resized.astype(np.float32) / 255.0
@@ -49,13 +58,9 @@ def make_depth(img_path, depth_path):
     img_norm = img_norm.transpose(2, 0, 1)
     img_norm = np.expand_dims(img_norm, axis=0)
 
-    session = ort.InferenceSession(model_file, providers=['CPUExecutionProvider'])
-    input_name = session.get_inputs()[0].name
-    
     depth_map = session.run(None, {input_name: img_norm})[0]
     depth_map = np.squeeze(depth_map)
     
-    # CUBIC interpolation upscaling maintains smooth edge gradients
     depth_map = cv2.resize(depth_map, (orig_w, orig_h), interpolation=cv2.INTER_CUBIC)
     
     depth_min, depth_max = depth_map.min(), depth_map.max()
@@ -64,17 +69,14 @@ def make_depth(img_path, depth_path):
     else:
         depth_norm = depth_map
         
-    # --- ENHANCED DEPTH CONTRAST ADJUSTMENT ---
+    # Contrast expansion: Gamma 1.4 + Percentile normalisation
     gamma = 1.4  
     depth_norm = np.power(depth_norm, gamma)
     
     p_low, p_high = np.percentile(depth_norm, (5, 95))
     depth_norm = np.clip((depth_norm - p_low) / (p_high - p_low + 1e-5), 0, 1)
-    # -------------------------------------------
         
     depth_img = (depth_norm * 255.0).astype(np.uint8)
-    
-    # Light bilateral smoothing to denoise the depth without blurring sharp edges
     depth_clean = cv2.bilateralFilter(depth_img, d=7, sigmaColor=50, sigmaSpace=50)
 
     cv2.imwrite(str(depth_path), depth_clean)
