@@ -1,34 +1,32 @@
-import os
 import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables (for local runs or GitHub Secrets)
+# Load environment variables (.env file for API keys and tokens)
 load_dotenv()
 
-# Ensure project root is in python path
+# Ensure repository root is on sys.path
 PROJECT_ROOT = Path(__file__).resolve().parent
-sys.path.append(str(PROJECT_ROOT))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from engine.pipeline import run_pipeline
 
 def main():
-    print("==================================================")
+    print("=" * 60)
     print("   BLACKLINES ART STUDIO: GITA AUTOMATION v20   ")
-    print("==================================================")
+    print("=" * 60)
     
-    # Configuration dictionary for the studio pipeline
-    config = {
-        "youtube_playlist_id": os.getenv("YOUTUBE_PLAYLIST_ID", "PL_ENGLISH_VERSION_ID_HERE"),
-        "fast_mode": False
-    }
-
+    fast_render = "--fast" in sys.argv
+    
     try:
-        # Execute the main sequential rollout pipeline
-        run_pipeline(root=PROJECT_ROOT, cfg=config)
-        print("\n[MASTER] Pipeline execution completed successfully!")
+        run_pipeline(root=PROJECT_ROOT, fast_mode=fast_render)
+        print("\n[MASTER] Execution finished successfully.")
+    except KeyboardInterrupt:
+        print("\n[MASTER] Process interrupted by user.")
+        sys.exit(130)
     except Exception as e:
-        print(f"\n[MASTER ERROR] Pipeline failed with error: {e}")
+        print(f"\n[CRITICAL ERROR] Pipeline execution halted: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
