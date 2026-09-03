@@ -18,7 +18,7 @@ SCOPES = [
 
 
 def is_headless() -> bool:
-    """Returns True if executing inside CI or without an active graphical display."""
+    """Detects if running inside headless CI without a GUI display."""
     if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
         return True
     if sys.platform != "win32" and not os.environ.get("DISPLAY"):
@@ -31,7 +31,7 @@ def get_authenticated_service(project_root: Path = Path(".")):
     token_file = project_root / "token.json"
     client_secrets_file = project_root / "client_secrets.json"
 
-    # Inject from environment if provided
+    # Hydrate credentials from environment variables if present (CI runners)
     env_token = os.environ.get("YOUTUBE_TOKEN_JSON")
     if env_token and env_token.strip():
         token_file.write_text(env_token.strip(), encoding="utf-8")
@@ -52,34 +52,34 @@ def get_authenticated_service(project_root: Path = Path(".")):
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            print("  [AUTH] Refreshing expired OAuth access token via Google Cloud...")
+            print("  [AUTH] Refreshing expired OAuth token via Google Cloud...")
             try:
                 creds.refresh(Request())
                 token_file.write_text(creds.to_json(), encoding="utf-8")
-                print("  ✓ Access token refreshed successfully.")
+                print("  ✓ OAuth token refreshed successfully.")
             except Exception as e:
-                print(f"  [AUTH ERROR] Token refresh failed: {e}")
+                print(f"  [AUTH ERROR] Automatic token refresh failed: {e}")
                 creds = None
 
     if not creds or not creds.valid:
         if is_headless():
             raise RuntimeError(
-                "[CRITICAL AUTH FAILURE] Running in headless CI (GitHub Actions). "
-                "Interactive browser login is disabled. "
-                "Please ensure the 'YOUTUBE_TOKEN_JSON' repository secret contains a valid OAuth refresh token."
-            )
-        
-        if not client_secrets_file.exists():
-            raise FileNotFoundError(
-                f"Missing {client_secrets_file}. Please download it from Google Cloud Console "
-                "and place it in your root directory."
+                "\n[CRITICAL AUTH FAILURE] Running in headless CI (GitHub Actions).\n"
+                "Interactive browser authorization is impossible.\n"
+                "Ensure repository secret 'YOUTUBE_TOKEN_JSON' contains a valid token with a refresh_token."
             )
 
-        print("  [AUTH] Initiating one-time local OAuth browser login...")
+        if not client_secrets_file.exists():
+            raise FileNotFoundError(
+                f"Missing {client_secrets_file}. Download OAuth Client JSON from Google Cloud Console "
+                "and save it to the project root."
+            )
+
+        print("  [AUTH] Opening browser for one-time local OAuth authorization...")
         flow = InstalledAppFlow.from_client_secrets_file(str(client_secrets_file), SCOPES)
         creds = flow.run_local_server(port=0)
         token_file.write_text(creds.to_json(), encoding="utf-8")
-        print("  ✓ New token.json generated and saved successfully.")
+        print("  ✓ Fresh token.json created.")
 
     return build("youtube", "v3", credentials=creds)
 
@@ -105,7 +105,7 @@ def get_or_create_playlist(youtube, title: str) -> str:
         res = create_req.execute()
         return res["id"]
     except Exception as e:
-        print(f"  [PLAYLIST WARNING] Could not manage playlist: {e}")
+        print(f"  [PLAYLIST WARNING] Failed to query or create playlist: {e}")
         return ""
 
 
@@ -125,30 +125,112 @@ def add_video_to_playlist(youtube, video_id: str, playlist_id: str):
                 }
             }
         ).execute()
-        print(f"  ✓ Video added to playlist: {playlist_id}")
+        print(f"  ✓ Video linked to playlist: {playlist_id}")
     except Exception as e:
-        print(f"  [PLAYLIST ERROR] Failed adding video to playlist: {e}")
+        print(f"  [PLAYLIST ERROR] Could not add video to playlist: {e}")
 
 
-def upload_to_youtube(
-    video_path: Path,
-    title: str,
-    description: str,
-    tags: list = None,
-    category_id: str = "27",  # Education
-    privacy_status: str = "public",
-    playlist_name: str = "Bhagavad Gita • English Edition",
-    project_root: Path = Path(".")
-) -> str:
+def upload_short_to_youtube(*args, **kwargs) -> str:
+    """
+    Polymorphic upload interface. Handles:
+    - upload_short_to_youtube(video_path, title, description, ...)
+    - upload_short_to_youtube(render_cfg_path, project_root)
+    - upload_short_to_youtube(video_path, metadata_dict)
+    - upload_short_to_youtube(video_path=..., title=..., ...)
+    """
+    project_root = Path(".")
+    video_path = None
+    title = kwargs.get("title")
+    description = kwargs.get("description")
+    tags = kwargs.get("tags")
+    category_id = kwargs.get("category_id", "27")  # Education
+    privacy_status = kwargs.get("privacy_status", "public")
+    playlist_name = kwargs.get("playlist_name", "Bhagavad Gita • English Edition")
+
+    # Inspect positional arguments
+    if len(args) >= 1:
+        first = args[0]
+        if isinstance(first, (str, Path)):
+            p = Path(first)
+            if p.suffix.lower() == ".json" and p.exists():
+                # Argument is config JSON path: (render_cfg_path, project_root)
+                try:
+                    cfg_data = json.loads(p.read_text(encoding="utf-8"))
+                    verse = cfg_data.get("verse", {})
+                    ch = verse.get("chapter", 1)
+                    vs = verse.get("verse", 1)
+                    title = f"Bhagavad Gita | Ch {ch} Verse {vs} #Shorts"
+                    description = f"Chapter {ch}, Verse {vs}\n\n{verse.get('meaning', '')}\n\n#BhagavadGita #Krishna #Shorts"
+                except Exception:
+                    pass
+                if len(args) >= 2 and isinstance(args[1], (str, Path)):
+                    project_root = Path(args[1])
+            elif p.suffix.lower() in [".mp4", ".mov", ".mkv"]:
+                video_path = p
+        elif isinstance(first, dict):
+            # Argument is a verse dictionary
+            ch = first.get("chapter", 1)
+            vs = first.get("verse", 1)
+            title = f"Bhagavad Gita | Ch {ch} Verse {vs} #Shorts"
+            description = f"Chapter {ch}, Verse {vs}\n\n{first.get('meaning', '')}\n\n#BhagavadGita #Krishna #Shorts"
+
+    if len(args) >= 2:
+        second = args[1]
+        if isinstance(second, str) and not title:
+            title = second
+        elif isinstance(second, dict):
+            if not title and "title" in second:
+                title = second["title"]
+            if not description and "description" in second:
+                description = second.get("description")
+
+    if len(args) >= 3 and isinstance(args[2], str) and not description:
+        description = args[2]
+
+    if "video_path" in kwargs:
+        video_path = Path(kwargs["video_path"])
+
+    # If video_path is still unresolved, locate the rendered output
+    if not video_path or not video_path.exists():
+        candidates = [
+            project_root / "output" / "final_master.mp4",
+            project_root / "output" / "final_short.mp4",
+            project_root / "output" / "render.mp4",
+            project_root / "cache" / "final_master.mp4",
+        ]
+        found = False
+        for c in candidates:
+            if c.exists():
+                video_path = c
+                found = True
+                break
+        if not found:
+            # Search output directory for any valid mp4
+            out_dir = project_root / "output"
+            if out_dir.exists():
+                mp4s = sorted(out_dir.glob("*.mp4"), key=os.path.getmtime, reverse=True)
+                if mp4s:
+                    video_path = mp4s[0]
+                    found = True
+        if not found:
+            raise FileNotFoundError("Could not locate final rendered .mp4 file in output/ or cache/.")
+
+    # Defaults for metadata
+    if not title:
+        title = "Bhagavad Gita Divine Verse #Shorts"
+    if not description:
+        description = "Daily sacred Bhagavad Gita wisdom, Sanskrit chanting, and philosophical insight.\n\n#BhagavadGita #Krishna #Wisdom #Shorts"
+    if not tags:
+        tags = ["BhagavadGita", "Krishna", "Spirituality", "Shorts", "DailyWisdom", "Meditation"]
+
     youtube = get_authenticated_service(project_root)
-    tags = tags or ["BhagavadGita", "Krishna", "Spirituality", "Shorts", "DailyWisdom"]
 
     body = {
         "snippet": {
-            "title": title[:100],
-            "description": description[:5000],
+            "title": str(title)[:100],
+            "description": str(description)[:5000],
             "tags": tags,
-            "categoryId": category_id
+            "categoryId": str(category_id)
         },
         "status": {
             "privacyStatus": privacy_status,
@@ -163,7 +245,7 @@ def upload_to_youtube(
         resumable=True
     )
 
-    print(f"  [UPLOADER] Initiating upload for: {video_path.name}")
+    print(f"  [UPLOADER] Commencing YouTube Shorts publication: {video_path.name}")
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
     response = None
@@ -172,7 +254,7 @@ def upload_to_youtube(
         try:
             status, response = request.next_chunk()
             if status:
-                print(f"  [UPLOAD PROGRESS] {int(status.progress() * 100)}% uploaded...")
+                print(f"  [UPLOAD PROGRESS] {int(status.progress() * 100)}% transferred...")
         except HttpError as e:
             if e.resp.status in [500, 502, 503, 504]:
                 retry_count += 1
@@ -184,7 +266,7 @@ def upload_to_youtube(
 
     video_id = response.get("id")
     video_url = f"https://youtu.be/{video_id}"
-    print(f"  ✓ Video published successfully: {video_url}")
+    print(f"  ✓ Video published live: {video_url}")
 
     if playlist_name:
         playlist_id = get_or_create_playlist(youtube, playlist_name)
@@ -192,3 +274,8 @@ def upload_to_youtube(
             add_video_to_playlist(youtube, video_id, playlist_id)
 
     return video_url
+
+
+# Global export aliases to catch any variant imports across modules
+upload_to_youtube = upload_short_to_youtube
+upload_video = upload_short_to_youtube
