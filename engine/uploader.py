@@ -135,6 +135,9 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
     privacy_status = kwargs.get("privacy_status", "public")
     playlist_name = kwargs.get("playlist_name", "Bhagavad Gita • English Edition")
 
+    # ==========================================
+    # PASTE THE DESCRIPTION TEMPLATE BLOCK HERE:
+    # ==========================================
     if len(args) >= 1:
         first = args[0]
         if isinstance(first, (str, Path)):
@@ -145,8 +148,23 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
                     verse = cfg_data.get("verse", {})
                     ch = verse.get("chapter", 1)
                     vs = verse.get("verse", 1)
-                    title = f"Bhagavad Gita | Ch {ch} Verse {vs} #Shorts"
-                    description = f"Chapter {ch}, Verse {vs}\n\n{verse.get('meaning', '')}\n\n#BhagavadGita #Krishna #Shorts"
+                    sanskrit_text = verse.get("sanskrit", "").replace("\\n", "\n")
+                    meaning_text = verse.get("meaning", "")
+                    insight_text = verse.get("insight", "")
+                    
+                    title = f"Bhagavad Gita | Chapter {ch} Verse {vs} #Shorts"
+                    
+                    description = (
+                        f"॥ श्रीमद्भगवद्गीता ॥ Chapter {ch}, Verse {vs}\n\n"
+                        f"{sanskrit_text}\n\n"
+                        f"Meaning:\n{meaning_text}\n\n"
+                        f"The Moment:\n{insight_text}\n\n"
+                        f"--------------------------------------------------\n"
+                        f"Produced, designed, and mastered by Venkatesh Marturu\n"
+                        f"BLACKLINES ART STUDIO © 2026. All rights reserved.\n"
+                        f"--------------------------------------------------\n\n"
+                        f"#BhagavadGita #Krishna #SpiritualWisdom #Shorts #DailyWisdom #Meditation #SanatanaDharma"
+                    )
                 except Exception:
                     pass
                 if len(args) >= 2 and isinstance(args[1], (str, Path)):
@@ -154,10 +172,7 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
             elif p.suffix.lower() in [".mp4", ".mov", ".mkv"]:
                 video_path = p
         elif isinstance(first, dict):
-            ch = first.get("chapter", 1)
-            vs = first.get("verse", 1)
-            title = f"Bhagavad Gita | Ch {ch} Verse {vs} #Shorts"
-            description = f"Chapter {ch}, Verse {vs}\n\n{first.get('meaning', '')}\n\n#BhagavadGita #Krishna #Shorts"
+            # ... rest of function continues below ...
 
     if len(args) >= 2:
         second = args[1]
