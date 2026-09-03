@@ -6,21 +6,32 @@ import os
 import random
 import sys
 import time
+import urllib.request
 import cv2
 import numpy as np
 import json
 import wave
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from engine.audio_analyzer import extract_music_wave_average_profile
-import torch
+
+try:
+    import torch
+except ImportError:
+    torch = None
 
 _MIDAS_MODEL = None
 _MIDAS_TRANSFORMS = None
 _TORCH_DEVICE = None
 
 
+# =====================================================================
+# 1. 3D DEPTH MAP ENGINES (ONNX Depth Anything v2 + PyTorch MiDaS)
+# =====================================================================
+
 def get_midas_model(model_type="MiDaS_small"):
     global _MIDAS_MODEL, _MIDAS_TRANSFORMS, _TORCH_DEVICE
+    if torch is None:
+        return None, None, None
     if _MIDAS_MODEL is None:
         _TORCH_DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"  [MIDAS] Initializing PyTorch MiDaS model on device: {_TORCH_DEVICE}...")
@@ -34,29 +45,67 @@ def get_midas_model(model_type="MiDaS_small"):
     return _MIDAS_MODEL, _MIDAS_TRANSFORMS, _TORCH_DEVICE
 
 
-def generate_and_save_depth_map(img_bgr: np.ndarray, target_depth_path: Path) -> np.ndarray:
+def generate_and_save_depth_map(img_input, target_depth_path: Path) -> np.ndarray:
+    target_depth_path = Path(target_depth_path)
     target_depth_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Option A: Primary High-Contrast Depth Anything v2 (ONNX)
+    try:
+        from engine.depth import make_depth
+        if isinstance(img_input, (str, Path)) and Path(img_input).exists():
+            make_depth(Path(img_input), target_depth_path)
+        else:
+            temp_in = target_depth_path.parent / f"temp_{target_depth_path.stem}.png"
+            cv2.imwrite(str(temp_in), img_input)
+            make_depth(temp_in, target_depth_path)
+            if temp_in.exists():
+                temp_in.unlink()
+
+        if target_depth_path.exists():
+            depth_u8 = cv2.imread(str(target_depth_path), cv2.IMREAD_GRAYSCALE)
+            if depth_u8 is not None:
+                return depth_u8
+    except Exception as e:
+        print(f"  [DEPTH] ONNX Depth-Anything fallback to MiDaS: {e}")
+
+    # Option B: Secondary Neural Fallback (PyTorch MiDaS)
+    img_bgr = img_input if isinstance(img_input, np.ndarray) else cv2.imread(str(img_input))
+    if img_bgr is None:
+        fallback_map = np.full((1920, 1080), 128, dtype=np.uint8)
+        cv2.imwrite(str(target_depth_path), fallback_map)
+        return fallback_map
+
     model, transform, device = get_midas_model("MiDaS_small")
+    if model is not None:
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        input_batch = transform(img_rgb).to(device)
 
-    img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-    input_batch = transform(img_rgb).to(device)
+        with torch.no_grad():
+            prediction = model(input_batch)
+            prediction = torch.nn.functional.interpolate(
+                prediction.unsqueeze(1),
+                size=img_bgr.shape[:2],
+                mode="bicubic",
+                align_corners=False,
+            ).squeeze()
 
-    with torch.no_grad():
-        prediction = model(input_batch)
-        prediction = torch.nn.functional.interpolate(
-            prediction.unsqueeze(1),
-            size=img_bgr.shape[:2],
-            mode="bicubic",
-            align_corners=False,
-        ).squeeze()
+        depth_map = prediction.cpu().numpy()
+        d_min, d_max = depth_map.min(), depth_map.max()
+        depth_norm = (depth_map - d_min) / (d_max - d_min) if d_max - d_min > 0 else np.zeros_like(depth_map)
+        depth_norm = np.power(depth_norm, 1.4)
+        depth_u8 = (depth_norm * 255.0).astype(np.uint8)
+        cv2.imwrite(str(target_depth_path), depth_u8)
+        return depth_u8
 
-    depth_map = prediction.cpu().numpy()
-    d_min, d_max = depth_map.min(), depth_map.max()
-    depth_norm = (depth_map - d_min) / (d_max - d_min) if d_max - d_min > 0 else np.zeros_like(depth_map)
-    depth_u8 = (depth_norm * 255.0).astype(np.uint8)
-    cv2.imwrite(str(target_depth_path), depth_u8)
-    return depth_u8
+    # Option C: Neutral flat gradient fallback
+    fallback_map = np.full(img_bgr.shape[:2], 128, dtype=np.uint8)
+    cv2.imwrite(str(target_depth_path), fallback_map)
+    return fallback_map
 
+
+# =====================================================================
+# 2. MULTILINGUAL TYPOGRAPHY & ASSET MANAGER
+# =====================================================================
 
 def convert_to_devanagari_num(text_str: str) -> str:
     devanagari_map = {
@@ -93,58 +142,15 @@ SHINE_DURATION = 0.22
 GOLD_SHINE = (255, 245, 160, 255)
 GOLD_GLOW_BACK = (255, 215, 0, 180)
 
-
-def ffmpeg():
-    return shutil.which("ffmpeg") or "ffmpeg"
-
-
-def test_encoder_works(encoder_name: str) -> bool:
-    cmd = [
-        ffmpeg(), '-y', '-nostdin',
-        '-f', 'lavfi', '-i', 'nullsrc=s=128x128:d=0.1',
-        '-c:v', encoder_name,
-        '-f', 'null', '-'
-    ]
-    try:
-        p = subprocess.run(
-            cmd,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=2
-        )
-        return p.returncode == 0
-    except Exception:
-        return False
-
-
-def detect_best_encoder():
-    for enc in ("h264_nvenc", "h264_qsv", "h264_amf", "h264_mf"):
-        if test_encoder_works(enc):
-            return enc
-    return "libx264"
-
-
-def get_audio_duration(wav_path):
-    p = Path(wav_path)
-    if not p.exists():
-        return 0.0
-    try:
-        with wave.open(str(p), 'rb') as wav_file:
-            rate = wav_file.getframerate()
-            return wav_file.getnframes() / float(rate) if rate > 0 else 0.0
-    except Exception:
-        cmd = [
-            "ffprobe", "-v", "error",
-            "-show_entries", "format=duration",
-            "-of", "default=noprint_wrappers=1:nokey=1",
-            str(p)
-        ]
-        try:
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
-            return float(res.stdout.strip())
-        except Exception:
-            return 0.0
+FONT_DOWNLOAD_URLS = {
+    "NotoSerifDevanagari-Bold.ttf": "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSerifDevanagari/NotoSerifDevanagari-Bold.ttf",
+    "Cinzel-Bold.ttf": "https://github.com/google/fonts/raw/main/ofl/cinzel/Cinzel-Bold.ttf",
+    "EBGaramond-Medium.ttf": "https://github.com/google/fonts/raw/main/ofl/ebgaramond/EBGaramond-Medium.ttf",
+    "NotoSansTelugu-Bold.ttf": "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansTelugu/NotoSansTelugu-Bold.ttf",
+    "NotoSansTamil-Bold.ttf": "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansTamil/NotoSansTamil-Bold.ttf",
+    "NotoSansMalayalam-Bold.ttf": "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansMalayalam/NotoSansMalayalam-Bold.ttf",
+    "NotoSansKannada-Bold.ttf": "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansKannada/NotoSansKannada-Bold.ttf",
+}
 
 
 def load_font(preferred_names, size, assets_dir=None, root_dir=None):
@@ -155,6 +161,13 @@ def load_font(preferred_names, size, assets_dir=None, root_dir=None):
         dirs_to_check.extend([Path(assets_dir) / "fonts", Path(assets_dir)])
     if root_dir:
         dirs_to_check.extend([Path(root_dir) / "assets" / "fonts", Path(root_dir) / "fonts", Path(root_dir) / "assets"])
+
+    dirs_to_check.extend([
+        Path("/usr/share/fonts/truetype/dejavu"),
+        Path("/usr/share/fonts/truetype/freefont"),
+        Path("/usr/share/fonts"),
+        Path(r"C:\Windows\Fonts")
+    ])
 
     for name in preferred_names:
         for d in dirs_to_check:
@@ -169,8 +182,22 @@ def load_font(preferred_names, size, assets_dir=None, root_dir=None):
                 return ImageFont.truetype(name, size)
             except OSError:
                 pass
+
+        if name in FONT_DOWNLOAD_URLS and root_dir:
+            target_p = Path(root_dir) / "assets" / "fonts" / name
+            target_p.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                urllib.request.urlretrieve(FONT_DOWNLOAD_URLS[name], str(target_p))
+                return ImageFont.truetype(str(target_p), size)
+            except Exception:
+                pass
+
     return ImageFont.load_default()
 
+
+# =====================================================================
+# 3. GRAPHICS, KARAOKE & TEXT LAYOUT
+# =====================================================================
 
 def wrap_text_to_width(text, font, max_width, draw):
     if isinstance(text, list):
@@ -330,8 +357,9 @@ def rgba_to_bgr_and_alpha(pil_img):
 def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_audio_duration):
     root_dir = Path(cfg_path).resolve().parent.parent if Path(cfg_path).resolve().parent.name == "cache" else Path(cfg_path).resolve().parent
     assets_dir = root_dir / "assets"
-    cfg = json.loads(Path(cfg_path).read_text(encoding="utf-8"))
+    cfg = json.loads(Path(cfg_path).read_text(encoding="utf-8")) if cfg_path and Path(cfg_path).exists() else {}
     verse_data = cfg.get("verse", {})
+    lang_info = cfg.get("language", {"code": "en", "name": "English"})
 
     raw_sanskrit = convert_to_devanagari_num(verse_data.get("sanskrit", "").replace("\\n", "\n").strip())
     sanskrit_lines_raw = [l.strip() for l in raw_sanskrit.split("\n") if l.strip()]
@@ -347,14 +375,26 @@ def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_au
     CARD_BG = (10, 14, 20, 220)
     CARD_BORDER = (212, 175, 86, 210)
 
-    f_title = load_font(["Cinzel-Bold.ttf", "timesbd.ttf"], FONT_SIZES["main_title"], assets_dir, root_dir)
-    f_sub = load_font(["Cinzel-Bold.ttf", "timesbd.ttf"], FONT_SIZES["sub_title"], assets_dir, root_dir)
+    regional_meaning_fonts = {
+        "te": ["NotoSansTelugu-Bold.ttf"],
+        "ta": ["NotoSansTamil-Bold.ttf"],
+        "ml": ["NotoSansMalayalam-Bold.ttf"],
+        "kn": ["NotoSansKannada-Bold.ttf"],
+        "hi": ["NotoSerifDevanagari-Bold.ttf", "mangal.ttf"],
+    }
+    preferred_body_fonts = regional_meaning_fonts.get(
+        lang_info.get("code", "en"),
+        ["EBGaramond-Medium.ttf", "georgia.ttf", "DejaVuSerif.ttf"]
+    )
+
+    f_title = load_font(["Cinzel-Bold.ttf", "timesbd.ttf", "DejaVuSans-Bold.ttf"], FONT_SIZES["main_title"], assets_dir, root_dir)
+    f_sub = load_font(["Cinzel-Bold.ttf", "timesbd.ttf", "DejaVuSans-Bold.ttf"], FONT_SIZES["sub_title"], assets_dir, root_dir)
     f_sanskrit = load_font(["NotoSerifDevanagari-Bold.ttf", "mangal.ttf"], FONT_SIZES["sanskrit_verse"], assets_dir, root_dir)
     f_sk_badge = load_font(["NotoSerifDevanagari-Bold.ttf", "mangal.ttf"], FONT_SIZES["sanskrit_badges"], assets_dir, root_dir)
-    f_meaning_hd = load_font(["Cinzel-Bold.ttf", "timesbd.ttf"], FONT_SIZES["meaning_header"], assets_dir, root_dir)
-    f_meaning = load_font(["EBGaramond-Medium.ttf", "georgia.ttf"], FONT_SIZES["meaning_text"], assets_dir, root_dir)
-    f_moment_hd = load_font(["Cinzel-Bold.ttf", "timesbd.ttf"], FONT_SIZES["moment_header"], assets_dir, root_dir)
-    f_moment = load_font(["EBGaramond-Medium.ttf", "georgia.ttf"], FONT_SIZES["moment_text"], assets_dir, root_dir)
+    f_meaning_hd = load_font(["Cinzel-Bold.ttf", "timesbd.ttf", "DejaVuSans-Bold.ttf"], FONT_SIZES["meaning_header"], assets_dir, root_dir)
+    f_meaning = load_font(preferred_body_fonts, FONT_SIZES["meaning_text"], assets_dir, root_dir)
+    f_moment_hd = load_font(["Cinzel-Bold.ttf", "timesbd.ttf", "DejaVuSans-Bold.ttf"], FONT_SIZES["moment_header"], assets_dir, root_dir)
+    f_moment = load_font(preferred_body_fonts, FONT_SIZES["moment_text"], assets_dir, root_dir)
 
     PAD_Y, PAD_X = LAYOUT["box_padding_y"], LAYOUT["box_padding_x"]
     GAP, RAD = LAYOUT["box_gap"], LAYOUT["corner_radius"]
@@ -425,7 +465,11 @@ def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_au
     border_bgr, border_alpha = rgba_to_bgr_and_alpha(border_img)
 
     header_img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    draw_3d_header(header_img, 80, 170, "BHAGAVAD GITA", f"CHAPTER {verse_data.get('chapter', 1)} • VERSE {verse_data.get('verse_number', 1)}", f_title, f_sub, GOLD_ACCENT, CREAM_WHITE)
+    draw_3d_header(
+        header_img, 80, 170, "BHAGAVAD GITA",
+        f"CHAPTER {verse_data.get('chapter', 1)} • VERSE {verse_data.get('verse_number', 1)}",
+        f_title, f_sub, GOLD_ACCENT, CREAM_WHITE
+    )
     header_bgr, header_alpha = rgba_to_bgr_and_alpha(header_img)
 
     box1_container = Image.new("RGBA", (w, h), (0, 0, 0, 0))
@@ -471,6 +515,55 @@ def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_au
     }
 
 
+# =====================================================================
+# 4. FFMPEG ENCODING ENGINE & HARDWARE DETECTOR
+# =====================================================================
+
+def ffmpeg():
+    return shutil.which("ffmpeg") or "ffmpeg"
+
+
+def test_encoder_works(encoder_name: str) -> bool:
+    cmd = [
+        ffmpeg(), '-y', '-nostdin',
+        '-f', 'lavfi', '-i', 'nullsrc=s=128x128:d=0.1',
+        '-c:v', encoder_name,
+        '-f', 'null', '-'
+    ]
+    try:
+        p = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+        return p.returncode == 0
+    except Exception:
+        return False
+
+
+def detect_best_encoder():
+    for enc in ("h264_nvenc", "h264_qsv", "h264_amf", "h264_mf"):
+        if test_encoder_works(enc):
+            return enc
+    return "libx264"
+
+
+def get_audio_duration(wav_path):
+    p = Path(wav_path)
+    if not p.exists():
+        return 0.0
+    try:
+        with wave.open(str(p), 'rb') as wav_file:
+            rate = wav_file.getframerate()
+            return wav_file.getnframes() / float(rate) if rate > 0 else 0.0
+    except Exception:
+        cmd = [
+            ffmpeg(), "-v", "error", "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1", str(p)
+        ]
+        try:
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            return float(res.stdout.strip())
+        except Exception:
+            return 64.0
+
+
 def start_ffmpeg_process(out_path, w, h, fps, encoder_name, fast_mode=False):
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
     cmd = [
@@ -499,6 +592,10 @@ def start_ffmpeg_process(out_path, w, h, fps, encoder_name, fast_mode=False):
     return subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+# =====================================================================
+# 5. MASTER 3D PARALLAX RENDERING LOOP
+# =====================================================================
+
 def render_master_video(images, out, master_audio_path, bg_music_path=None, w=1080, h=1920, fps=30, cfg_path=None, sans_dur=0.0, eng_dur=0.0, fast_mode=False):
     w, h = 1080, 1920
     fps = 24 if fast_mode else 30
@@ -507,13 +604,16 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
     if fast_mode:
         print(f"  [FAST RENDER] Fast Preview Mode (1080p @ 24fps ultrafast)...")
     else:
-        print(f"  [RENDER] Production Mode using verified encoder: {best_encoder} (1080p @ 30fps)...")
+        print(f"  [RENDER] Production Mode using verified encoder: {best_encoder} (1080p @ {fps}fps)...")
 
     audio_duration = get_audio_duration(master_audio_path) or 64.0
     total_frames = int(audio_duration * fps)
 
     target_track = bg_music_path if (bg_music_path and Path(bg_music_path).exists()) else master_audio_path
-    wave_profile = extract_music_wave_average_profile(Path(target_track), fps=fps)
+    try:
+        wave_profile = extract_music_wave_average_profile(Path(target_track), fps=fps)
+    except Exception:
+        wave_profile = [0.15] * total_frames
 
     ui = prepare_sequential_ui(w, h, cfg_path, None, sans_dur, eng_dur, audio_duration)
 
@@ -561,10 +661,10 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
             img_overscanned = cv2.resize(img_cropped, (ow, oh), interpolation=cv2.INTER_CUBIC)
 
             if not depth_path.exists():
-                generate_and_save_depth_map(img, depth_path)
+                generate_and_save_depth_map(img_path, depth_path)
             depth_raw = cv2.imread(str(depth_path), cv2.IMREAD_GRAYSCALE)
             if depth_raw is None:
-                depth_raw = generate_and_save_depth_map(img, depth_path)
+                depth_raw = generate_and_save_depth_map(img_path, depth_path)
 
             depth_cropped = depth_raw[depth_slice]
             depth_overscanned = cv2.resize(depth_cropped, (ow, oh), interpolation=cv2.INTER_CUBIC)
@@ -701,6 +801,10 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
         raise e
 
 
+# =====================================================================
+# 6. STUDIO MASTER MUXER (NON-BLOCKING HEADLESS)
+# =====================================================================
+
 def mux(video, audio, out, chapter=1, verse=1):
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     
@@ -728,7 +832,7 @@ def mux(video, audio, out, chapter=1, verse=1):
         "-metadata", f"composer={author_str}",
         "-metadata", f"album_artist={author_str}",
         "-metadata", f"publisher={studio_str}",
-        "-metadata", "album=Srimad Bhagavad Gita Cinematic Master Series",
+        "-metadata", f"album=Srimad Bhagavad Gita Cinematic Master Series",
         "-metadata", f"copyright={copyright_str}",
         "-metadata", "year=2026",
         "-metadata", "date=2026",
