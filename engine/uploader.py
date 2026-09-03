@@ -15,14 +15,12 @@ SCOPES = [
     "https://www.googleapis.com/auth/youtube"
 ]
 
-
 def is_headless() -> bool:
     if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
         return True
     if sys.platform != "win32" and not os.environ.get("DISPLAY"):
         return True
     return False
-
 
 def get_authenticated_service(project_root: Path = Path(".")):
     project_root = Path(project_root)
@@ -78,7 +76,6 @@ def get_authenticated_service(project_root: Path = Path(".")):
 
     return build("youtube", "v3", credentials=creds)
 
-
 def get_or_create_playlist(youtube, title: str) -> str:
     try:
         req = youtube.playlists().list(part="snippet", mine=True, maxResults=50)
@@ -103,7 +100,6 @@ def get_or_create_playlist(youtube, title: str) -> str:
         print(f"  [PLAYLIST WARNING] Failed to query/create playlist: {e}")
         return ""
 
-
 def add_video_to_playlist(youtube, video_id: str, playlist_id: str):
     if not playlist_id:
         return
@@ -124,7 +120,6 @@ def add_video_to_playlist(youtube, video_id: str, playlist_id: str):
     except Exception as e:
         print(f"  [PLAYLIST ERROR] Could not add video to playlist: {e}")
 
-
 def upload_short_to_youtube(*args, **kwargs) -> str:
     project_root = Path(".")
     video_path = None
@@ -144,7 +139,7 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
                     cfg_data = json.loads(p.read_text(encoding="utf-8"))
                     verse = cfg_data.get("verse", {})
                     ch = verse.get("chapter", 1)
-                    vs = verse.get("verse", 1)
+                    vs = verse.get("verse_number", verse.get("verse", 1))
                     sanskrit_text = verse.get("sanskrit", "").replace("\\n", "\n")
                     meaning_text = verse.get("meaning", "")
                     insight_text = verse.get("insight", "")
@@ -162,8 +157,8 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
                         f"--------------------------------------------------\n\n"
                         f"#BhagavadGita #Krishna #SpiritualWisdom #Shorts #DailyWisdom #Meditation #SanatanaDharma"
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"  [DESC ERROR] Failed parsing JSON for description: {e}")
 
                 if len(args) >= 2 and isinstance(args[1], (str, Path)):
                     project_root = Path(args[1])
@@ -171,20 +166,17 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
                 video_path = p
         elif isinstance(first, dict):
             ch = first.get("chapter", 1)
-            vs = first.get("verse", 1)
+            vs = first.get("verse_number", first.get("verse", 1))
             title = f"Bhagavad Gita | Ch {ch} Verse {vs} #Shorts"
             description = f"Chapter {ch}, Verse {vs}\n\n{first.get('meaning', '')}\n\n#BhagavadGita #Krishna #Shorts"
-            # ... rest of function continues below ...
 
-    if len(args) >= 2:
-        second = args[1]
-        if isinstance(second, str) and not title:
-            title = second
-        elif isinstance(second, dict):
-            if not title and "title" in second:
-                title = second["title"]
-            if not description and "description" in second:
-                description = second.get("description")
+    if len(args) >= 2 and isinstance(args[1], str) and not title:
+        title = args[1]
+    elif len(args) >= 2 and isinstance(args[1], dict):
+        if not title and "title" in args[1]:
+            title = args[1]["title"]
+        if not description and "description" in args[1]:
+            description = args[1]["description"]
 
     if len(args) >= 3 and isinstance(args[2], str) and not description:
         description = args[2]
@@ -273,7 +265,6 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
             add_video_to_playlist(youtube, video_id, playlist_id)
 
     return video_url
-
 
 upload_to_youtube = upload_short_to_youtube
 upload_video = upload_short_to_youtube
