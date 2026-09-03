@@ -1,19 +1,18 @@
-import os
-import sys
 import json
-import subprocess
-import urllib.request
+import random
+import sys
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont
 
-# Accurate Verse Counts per Chapter
+from engine.audio_mixer import mix_full_soundtrack
+from engine.uploader import upload_short_to_youtube
+from engine.video import get_audio_duration, mux, render_master_video
+
 BHAGAVAD_GITA_CHAPTERS = {
     1: 47,  2: 72,  3: 43,  4: 42,  5: 29,  6: 47,
     7: 30,  8: 28,  9: 34, 10: 42, 11: 55, 12: 20,
     13: 35, 14: 27, 15: 20, 16: 24, 17: 28, 18: 78
 }
 
-# Sequential Rollout Queue with Studio TTS Voice Profiles
 GLOBAL_LANGUAGES = [
     {"code": "en", "name": "English", "voice": "en-IN-PrabhatNeural", "playlist_id": "PL_ENGLISH_VERSION_ID_HERE"},
     {"code": "hi", "name": "Hindi", "voice": "hi-IN-MadhurNeural", "playlist_id": "PL_HINDI_VERSION_ID_HERE"},
@@ -27,338 +26,206 @@ GLOBAL_LANGUAGES = [
     {"code": "ja", "name": "Japanese", "voice": "ja-JP-KeitaNeural", "playlist_id": "PL_JAPANESE_VERSION_ID_HERE"},
 ]
 
-def ensure_fonts(root: Path):
-    """Guarantees presence of high-fidelity fonts, downloading them if absent."""
-    fonts_dir = root / "assets" / "fonts"
-    fonts_dir.mkdir(parents=True, exist_ok=True)
+def load_verified_verse(root: Path, chapter: int, verse: int, lang_code: str) -> dict:
+    try:
+        from engine.gita_store import get_verse_from_dataset
+        raw = get_verse_from_dataset(chapter, verse, root)
+        if raw and "sloka" in raw:
+            translations = raw.get("authentic_translation", {})
+            dialogue = raw.get("viewer_dialogue", {})
+            return {
+                "sanskrit": raw["sloka"].get("sanskrit", ""),
+                "meaning": translations.get(lang_code, translations.get("english", "")),
+                "insight": f"{dialogue.get('explanation', '')} {dialogue.get('practical_takeaway', '')}".strip()
+            }
+    except Exception:
+        pass
 
-    deva_font = fonts_dir / "NotoSansDevanagari-Bold.ttf"
-    if not deva_font.exists():
-        try:
-            url = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSansDevanagari/NotoSansDevanagari-Bold.ttf"
-            urllib.request.urlretrieve(url, str(deva_font))
-            print("  [FONT] Downloaded NotoSansDevanagari-Bold.ttf successfully.")
-        except Exception as e:
-            print(f"  [FONT WARN] Could not download Devanagari font: {e}")
-
-    return fonts_dir
-
-def get_font(fonts_dir: Path, font_name: str, size: int):
-    target = fonts_dir / font_name
-    if target.exists():
-        try:
-            return ImageFont.truetype(str(target), size)
-        except Exception:
-            pass
-    for fallback in ["NotoSansDevanagari-Bold.ttf", "NotoSerifDevanagari-Bold.ttf", "DejaVuSans-Bold.ttf"]:
-        alt = fonts_dir / fallback
-        if alt.exists():
-            try:
-                return ImageFont.truetype(str(alt), size)
-            except Exception:
-                continue
-    return ImageFont.load_default()
-
-def load_verse_data(root: Path, chapter: int, verse: int, lang_name: str) -> dict:
-    """Loads verse data from JSON storage files or returns verified Gita text."""
-    for candidate in [root / "data" / "verses.json", root / "data" / "gita.json", root / "verses.json"]:
+    for candidate in [root / "data" / "verses.json", root / "verses.json", root / "data" / "gita.json"]:
         if candidate.exists():
             try:
                 data = json.loads(candidate.read_text(encoding="utf-8"))
-                ch_key = str(chapter)
-                vs_key = str(verse)
-                if ch_key in data and vs_key in data[ch_key]:
-                    item = data[ch_key][vs_key]
-                    return {
-                        "sanskrit": item.get("sanskrit", ""),
-                        "meaning": item.get("meaning", ""),
-                        "insight": item.get("insight", "")
-                    }
+                for c_k in [str(chapter), chapter]:
+                    if isinstance(data, dict) and c_k in data and isinstance(data[c_k], dict):
+                        for v_k in [str(verse), verse]:
+                            if v_k in data[c_k]:
+                                item = data[c_k][v_k]
+                                return {
+                                    "sanskrit": item.get("sanskrit", ""),
+                                    "meaning": item.get(lang_code, item.get("meaning", item.get("english", ""))),
+                                    "insight": item.get("insight", item.get("explanation", ""))
+                                }
             except Exception:
-                pass
+                continue
 
-    # Verified Chapter 1 Verse 8 Authentic Text
-    if chapter == 1 and verse == 8:
+    if chapter == 1 and verse == 9:
         return {
-            "sanskrit": "भवान्भीष्मश्च कर्णश्च कृपश्च समितिञ्जयः ।\nअश्वत्थामा विकर्णश्च सौमदत्तिस्तथैव च ॥",
-            "meaning": "There are personalities like you, Bhishma, Karna, Kripa, Ashwatthama, Vikarna, and the son of Somadatta, who are always victorious in battle.",
-            "insight": "True leadership demands evaluating all inner challenges and strengths with unflinching clarity before action."
+            "sanskrit": "अन्ये च बहवः शूरा मदर्थे त्यक्तजीविताः ।\nनानाशस्त्रप्रहरणाः सर्वे युद्धविशारदाः ॥",
+            "meaning": "There are many other heroes who are prepared to lay down their lives for my sake. All of them are well-equipped with diverse weapons and experienced in the art of warfare.",
+            "insight": "True leadership demands evaluating all inner challenges and recognizing unwavering commitment when stepping onto the battlefield of life."
         }
 
     return {
-        "sanskrit": f"धर्मक्षेत्रे कुरुक्षेत्रे समवेता युयुत्सवः। (Ch {chapter}, V {verse})",
-        "meaning": f"[{lang_name}] Bhagavad Gita Chapter {chapter}, Verse {verse}: Timeless wisdom illuminating the path of righteous duty.",
-        "insight": "Every verse serves as a beacon for self-discipline, mental mastery, and decisive focus in everyday life."
+        "sanskrit": "धर्मक्षेत्रे कुरुक्षेत्रे समवेता युयुत्सवः।",
+        "meaning": f"Bhagavad Gita Chapter {chapter}, Verse {verse}: Timeless wisdom illuminating the path of righteous duty.",
+        "insight": "Every verse serves as a beacon for self-discipline, mental mastery, and decisive clarity."
     }
 
-def generate_voiceover(text: str, voice: str, output_path: Path):
-    """Generates audio voiceover with edge-tts or gTTS fallback."""
-    output_path = Path(output_path).resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Primary: edge-tts
-    try:
-        cmd = ["edge-tts", "--voice", voice, "--text", text, "--write-media", str(output_path)]
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if res.returncode == 0 and output_path.exists() and output_path.stat().st_size > 500:
-            print(f"  ✓ Voiceover generated via edge-tts ({voice})")
-            return output_path
-    except Exception:
-        pass
-
-    # Fallback: gTTS
-    try:
-        from gtts import gTTS
-        tts = gTTS(text=text, lang="en")
-        tts.save(str(output_path))
-        print("  ✓ Voiceover generated via gTTS fallback.")
-        return output_path
-    except Exception:
-        pass
-
-    # Ultimate fallback: Silent 20-second audio track
-    print("  [AUDIO WARN] TTS unavailable, creating silent fallback track.")
-    subprocess.run([
-        "ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-        "-t", "20", "-q:a", "9", "-acodec", "libmp3lame", str(output_path)
-    ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return output_path
-
-def get_audio_duration(audio_path: Path) -> float:
-    """Calculates natural audio length via ffprobe."""
-    cmd = [
-        "ffprobe", "-v", "error", "-show_entries", "format=duration",
-        "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)
-    ]
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    try:
-        return float(res.stdout.strip())
-    except Exception:
-        return 20.0
-
-def wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_width: int):
-    """Wraps text cleanly within boundaries."""
-    lines = []
-    for paragraph in text.split("\n"):
-        words = paragraph.split(" ")
-        curr_line = ""
-        for word in words:
-            test_line = f"{curr_line} {word}".strip()
-            bbox = draw.textbbox((0, 0), test_line, font=font)
-            w = bbox[2] - bbox[0]
-            if w <= max_width:
-                curr_line = test_line
-            else:
-                if curr_line:
-                    lines.append(curr_line)
-                curr_line = word
-        if curr_line:
-            lines.append(curr_line)
-    return lines
-
-def render_cinematic_card(
-    root: Path,
-    chapter: int,
-    verse: int,
-    lang_name: str,
-    sanskrit: str,
-    meaning: str,
-    insight: str,
-    output_image_path: Path
-):
-    """Creates a high-end 1080x1920 golden spiritual layout with boxes, cards, and borders."""
-    fonts_dir = ensure_fonts(root)
-    img = Image.new("RGB", (1080, 1920), color=(10, 11, 18))
-    draw = ImageDraw.Draw(img)
-
-    # 1. Subtle Radial Background Gradient
-    for r in range(960, 0, -20):
-        color_val = int(14 + (1 - r / 960) * 16)
-        draw.ellipse([540 - r, 960 - r, 540 + r, 960 + r], fill=(color_val, color_val + 2, color_val + 10))
-
-    # 2. Dual Ornate Golden Frame Borders
-    gold_main = (212, 175, 55)
-    gold_dim = (140, 110, 30)
-    draw.rectangle([40, 40, 1040, 1880], outline=gold_dim, width=2)
-    draw.rectangle([54, 54, 1026, 1866], outline=gold_main, width=4)
-
-    # Ornate Corner Accents
-    for cx, cy in [(54, 54), (1026, 54), (54, 1866), (1026, 1866)]:
-        draw.rectangle([cx - 10, cy - 10, cx + 10, cy + 10], fill=gold_main)
-
-    # 3. Header Box: Chapter & Verse Banner
-    font_header = get_font(fonts_dir, "NotoSansDevanagari-Bold.ttf", 38)
-    font_sub = get_font(fonts_dir, "NotoSansDevanagari-Bold.ttf", 26)
-    
-    draw.rectangle([200, 140, 880, 240], fill=(22, 24, 38), outline=gold_main, width=2)
-    draw.text((540, 170), f"॥ श्रीमद्भगवद्गीता ॥", font=font_header, fill=gold_main, anchor="mm")
-    draw.text((540, 215), f"{lang_name.upper()} • CHAPTER {chapter}, VERSE {verse}", font=font_sub, fill=(240, 240, 240), anchor="mm")
-
-    # 4. Sacred Sanskrit Sloka Container Box
-    draw.rounded_rectangle([90, 360, 990, 820], radius=16, fill=(18, 19, 32), outline=gold_dim, width=2)
-    draw.text((540, 410), "॥ श्लोक ॥", font=font_sub, fill=gold_main, anchor="mm")
-
-    font_sloka = get_font(fonts_dir, "NotoSansDevanagari-Bold.ttf", 40)
-    sloka_lines = wrap_text(draw, sanskrit, font_sloka, max_width=820)
-    y_sloka = 540 - (len(sloka_lines) * 28)
-    for line in sloka_lines:
-        draw.text((540, y_sloka), line, font=font_sloka, fill=(255, 255, 255), anchor="mm")
-        y_sloka += 62
-
-    # 5. Meaning & Practical Insight Container Box
-    draw.rounded_rectangle([90, 900, 990, 1660], radius=16, fill=(16, 17, 28), outline=gold_main, width=2)
-    draw.text((540, 950), f"MEANING & INSIGHT", font=font_sub, fill=gold_main, anchor="mm")
-
-    font_text = get_font(fonts_dir, "NotoSansDevanagari-Bold.ttf", 34)
-    meaning_lines = wrap_text(draw, f'"{meaning}"', font_text, max_width=820)
-    y_text = 1040
-    for line in meaning_lines:
-        draw.text((540, y_text), line, font=font_text, fill=(230, 230, 230), anchor="mm")
-        y_text += 48
-
-    # Insight separator line
-    draw.line([250, y_text + 40, 830, y_text + 40], fill=gold_dim, width=1)
-    
-    font_insight_label = get_font(fonts_dir, "NotoSansDevanagari-Bold.ttf", 26)
-    font_insight = get_font(fonts_dir, "NotoSansDevanagari-Bold.ttf", 32)
-    draw.text((540, y_text + 80), "PRACTICAL WISDOM", font=font_insight_label, fill=gold_main, anchor="mm")
-    
-    insight_lines = wrap_text(draw, insight, font_insight, max_width=820)
-    y_ins = y_text + 130
-    for line in insight_lines:
-        draw.text((540, y_ins), line, font=font_insight, fill=(255, 215, 120), anchor="mm")
-        y_ins += 46
-
-    # 6. Studio Master Watermark
-    font_foot = get_font(fonts_dir, "NotoSansDevanagari-Bold.ttf", 22)
-    draw.text((540, 1780), "BLACKLINES ART STUDIO • TIMELESS WISDOM", font=font_foot, fill=(160, 160, 160), anchor="mm")
-
-    output_image_path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(str(output_image_path), quality=95)
-    print(f"  ✓ Studio visual card generated: {output_image_path.name}")
-    return output_image_path
-
-def run_pipeline(root: Path, cfg: dict, fast_mode: bool = False):
+def run_pipeline(root: Path, cfg: dict | None = None, fast_mode: bool = False):
     root = Path(root).resolve()
-    print(f"\n[PIPELINE] Initializing Studio Pipeline from: {root}")
+    tracker_file = root / "tracker.json"
+    cache_dir = root / "cache"
+    output_dir = root / "output"
 
-    # 1. State Tracking
-    tracker_path = root / "tracker.json"
-    if tracker_path.exists():
-        tracker = json.loads(tracker_path.read_text(encoding="utf-8"))
-    else:
-        tracker = {"language_index": 0, "chapter": 1, "verse": 8}
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    lang_idx = tracker.get("language_index", 0)
-    chapter = tracker.get("chapter", 1)
-    verse = tracker.get("verse", 8)
+    print("=" * 60)
+    print("      SHRIMAD BHAGAVAD GITA — AUTOMATION PIPELINE      ")
+    print("=" * 60)
+
+    if not tracker_file.exists():
+        tracker_file.write_text(
+            json.dumps({"language_index": 0, "chapter": 1, "verse": 9}, indent=2), encoding="utf-8"
+        )
+
+    tracker = json.loads(tracker_file.read_text(encoding="utf-8"))
+    lang_idx = int(tracker.get("language_index", 0))
+    ch = int(tracker.get("chapter", 1))
+    v = int(tracker.get("verse", 9))
 
     if lang_idx >= len(GLOBAL_LANGUAGES):
+        print("  [ROLLOUT] Full global sequence complete! Cycling language queue...")
         lang_idx = 0
 
     current_lang = GLOBAL_LANGUAGES[lang_idx]
-    print(f"[PIPELINE] Active Language Target: {current_lang['name']} ({current_lang['code'].upper()})")
-    print(f"[PIPELINE] Current Target -> Chapter {chapter}, Verse {verse}")
+    print(f"\n[1/6] Loading Chapter {ch}, Verse {v} in [{current_lang['name'].upper()}]...")
 
-    # 2. Load Verse Text
-    verse_info = load_verse_data(root, chapter, verse, current_lang['name'])
-    sanskrit_text = verse_info["sanskrit"]
-    meaning = verse_info["meaning"]
-    insight = verse_info["insight"]
+    verse_record = load_verified_verse(root, ch, v, current_lang["code"])
+    sanskrit_txt = verse_record["sanskrit"]
+    meaning_txt = verse_record["meaning"]
+    insight_txt = verse_record["insight"]
 
-    temp_dir = root / "temp"
-    output_dir = root / "output"
-    temp_dir.mkdir(parents=True, exist_ok=True)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    render_cfg = {
+        "verse": {
+            "chapter": ch,
+            "verse_number": v,
+            "sanskrit": sanskrit_txt,
+            "meaning": meaning_txt,
+            "insight": insight_txt,
+        },
+        "language": current_lang,
+        "narration_voice": current_lang["voice"]
+    }
+    cfg_path = cache_dir / "render_config.json"
+    cfg_path.write_text(json.dumps(render_cfg, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    # 3. Generate Audio Narration (Natural Dynamic Duration)
-    narration_script = f"Bhagavad Gita, Chapter {chapter}, Verse {verse}. {meaning}. Divine Insight: {insight}."
-    raw_audio = temp_dir / f"voice_{current_lang['code']}_{chapter}_{verse}.mp3"
-    generate_voiceover(narration_script, current_lang['voice'], raw_audio)
+    print("\n[2/6] Mixing Soundtrack & Applying Studio Vocal DSP...")
+    mastered, bg_music_track, music_attribution = mix_full_soundtrack(str(cfg_path), project_root=root)
 
-    audio_duration = get_audio_duration(raw_audio)
-    total_duration = audio_duration + 1.5  # Extra buffer for smooth ending fade
-    print(f"  [PACING] Natural voice duration: {audio_duration:.2f}s (Total video: {total_duration:.2f}s)")
+    sans_wav = cache_dir / "sanskrit_processed.wav"
+    eng_wav = cache_dir / "narration_processed.wav"
+    sans_dur = get_audio_duration(str(sans_wav))
+    eng_dur = get_audio_duration(str(eng_wav))
+    total_audio_dur = get_audio_duration(str(mastered))
 
-    # 4. Render Studio Visual Card
-    card_path = temp_dir / f"card_{current_lang['code']}_{chapter}_{verse}.png"
-    render_cinematic_card(root, chapter, verse, current_lang['name'], sanskrit_text, meaning, insight, card_path)
+    print(f"  ✓ Sanskrit Chanting Duration: {sans_dur:.1f}s")
+    print(f"  ✓ {current_lang['name']} Narration Duration: {eng_dur:.1f}s")
+    print(f"  ✓ Total Master Audio Duration: {total_audio_dur:.1f}s (Dynamic timeline)")
 
-    # 5. Assemble Video with 3D Parallax Motion & Sequential Fade-out
-    final_video_path = output_dir / f"GITA_{current_lang['code'].upper()}_CH{chapter:02d}_VS{verse:02d}.mp4"
-    total_frames = int(total_duration * 30)
-    fade_start = audio_duration
+    print("\n[3/6] Selecting & Distributing Visual Assets...")
+    img_dir = root / "assets" / "images"
+    valid_exts = {".png", ".jpg", ".jpeg", ".webp"}
+    all_imgs = [p for p in img_dir.iterdir() if p.suffix.lower() in valid_exts] if img_dir.exists() else []
 
-    filter_complex = (
-        f"[0:v]zoompan=z='min(zoom+0.0003,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s=1080x1920:fps=30,"
-        f"fade=t=out:st={fade_start}:d=1.5[v_out];"
-        f"[1:a]afade=t=out:st={fade_start}:d=1.5[a_out]"
+    if not all_imgs:
+        fallback_img = cache_dir / "fallback_bg.png"
+        if not fallback_img.exists():
+            Image.new("RGB", (1080, 1920), color=(14, 16, 26)).save(str(fallback_img))
+        all_imgs = [fallback_img]
+
+    images_needed = max(6, int(total_audio_dur / 6.0))
+    selected_images = []
+    while len(selected_images) < images_needed:
+        random.shuffle(all_imgs)
+        selected_images.extend(all_imgs)
+    selected_images = selected_images[:images_needed]
+
+    print(f"  ✓ Selected {len(selected_images)} scenes across timeline (~6.0s/cut)")
+
+    print("\n[4/6] Executing 3D Parallax Video Render...")
+    visuals_mp4 = cache_dir / "visuals_temp.mp4"
+    final_output = output_dir / f"GITA_{current_lang['code'].upper()}_CH{ch:02d}_VS{v:02d}.mp4"
+
+    render_master_video(
+        images=selected_images,
+        out=str(visuals_mp4),
+        master_audio_path=str(mastered),
+        bg_music_path=str(bg_music_track),
+        w=1080,
+        h=1920,
+        fps=30,
+        cfg_path=str(cfg_path),
+        sans_dur=sans_dur,
+        eng_dur=eng_dur,
+        fast_mode=fast_mode,
     )
 
-    print(f"[PIPELINE] Assembling 3D Parallax Video & Audio...")
-    cmd = [
-        "ffmpeg", "-y",
-        "-loop", "1", "-i", str(card_path),
-        "-i", str(raw_audio),
-        "-filter_complex", filter_complex,
-        "-map", "[v_out]",
-        "-map", "[a_out]",
-        "-t", str(total_duration),
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", "192k",
-        str(final_video_path)
-    ]
+    print("\n[5/6] Muxing Video and Audio with Studio Master Metadata...")
+    mux(visuals_mp4, mastered, final_output, chapter=ch, verse=v)
+    print(f"  ✓ Master Video Exported: {final_output.resolve()}")
 
-    res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if res.returncode != 0:
-        print(f"  [FFMPEG ERROR] {res.stderr.decode()}")
-        raise RuntimeError("Video rendering failed.")
+    print("\n[6/6] Finalizing Distribution & Auto-Upload...")
+    auto_upload = True
+    upload_succeeded = False
 
-    print(f"  ✓ Master Video Exported: {final_video_path.name}")
+    if auto_upload and not fast_mode:
+        try:
+            upload_short_to_youtube(
+                video_path=final_output,
+                chapter=ch,
+                verse=v,
+                sanskrit=sanskrit_txt,
+                meaning=meaning_txt,
+                insight=insight_txt,
+                project_root=root,
+                music_attribution=music_attribution,
+                schedule=False,
+                playlist_id=current_lang.get("playlist_id")
+            )
+            print(f"  ✓ Video uploaded to {current_lang['name']} playlist!")
+            upload_succeeded = True
+        except Exception as e:
+            print(f"  [WARN] YouTube upload skipped/error: {e}")
 
-    # 6. Upload to YouTube
-    from engine.uploader import upload_short_to_youtube
-    upload_success = False
-    try:
-        vid = upload_short_to_youtube(
-            video_path=final_video_path,
-            chapter=chapter,
-            verse=verse,
-            sanskrit=sanskrit_text,
-            meaning=meaning,
-            insight=insight,
-            project_root=root,
-            music_attribution=f"Blacklines Art Studio ({current_lang['name']})",
-            schedule=False,
-            playlist_id=current_lang["playlist_id"]
-        )
-        if vid:
-            upload_success = True
-    except Exception as e:
-        print(f"  [UPLOAD WARNING] YouTube upload skipped/failed: {e}")
+    next_v = v + 1
+    next_ch = ch
+    next_lang_idx = lang_idx
 
-    # 7. Advance Tracker State Safely
-    if upload_success or cfg.get("ignore_upload_errors", True):
-        next_verse = verse + 1
-        next_chapter = chapter
-        next_lang_idx = lang_idx
+    max_verses = BHAGAVAD_GITA_CHAPTERS.get(ch, 47)
+    if next_v > max_verses:
+        next_ch += 1
+        next_v = 1
+        print(f"  ✓ Completed Chapter {ch}! Moving to Chapter {next_ch}...")
 
-        max_verses = BHAGAVAD_GITA_CHAPTERS.get(chapter, 47)
-        if next_verse > max_verses:
-            next_chapter += 1
-            next_verse = 1
+    if next_ch > 18:
+        print(f"  ✓ Completed all 18 Chapters in {current_lang['name']}! Advancing to next language...")
+        next_lang_idx += 1
+        next_ch = 1
+        next_v = 1
 
-        if next_chapter > 18:
-            next_lang_idx += 1
-            next_chapter = 1
-            next_verse = 1
+    tracker["language_index"] = next_lang_idx
+    tracker["chapter"] = next_ch
+    tracker["verse"] = next_v
+    tracker_file.write_text(json.dumps(tracker, indent=2), encoding="utf-8")
 
-        tracker["language_index"] = next_lang_idx
-        tracker["chapter"] = next_chapter
-        tracker["verse"] = next_verse
-        tracker_path.write_text(json.dumps(tracker, indent=2), encoding="utf-8")
-        print(f"  ✓ Tracker advanced to Chapter {next_chapter}, Verse {next_verse}")
+    upcoming = GLOBAL_LANGUAGES[next_lang_idx % len(GLOBAL_LANGUAGES)]
+    print(f"  ✓ Tracker advanced. Next target: {upcoming['name']} (Chapter {next_ch}, Verse {next_v})")
+    print("\n" + "=" * 60)
+    print("               PIPELINE EXECUTION COMPLETE             ")
+    print("=" * 60)
 
-    print("[PIPELINE] EXECUTION COMPLETE.")
+if __name__ == "__main__":
+    fast_render = "--fast" in sys.argv
+    project_root_dir = Path(__file__).resolve().parent.parent
+    run_pipeline(project_root_dir, fast_mode=fast_render)
