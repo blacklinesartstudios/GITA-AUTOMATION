@@ -1,8 +1,9 @@
 import os
 import json
 import subprocess
+import numpy as np
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont  # <--- Make sure ImageFont is imported here
+from PIL import Image, ImageDraw, ImageFont
 
 from engine.depth_renderer import UltraDepthRenderer
 from engine.uploader import upload_short_to_youtube
@@ -68,7 +69,7 @@ def run_pipeline(root: Path, cfg: dict, fast_mode: bool = False):
     print(f"[PIPELINE] Active Language Target: {current_lang['name']} ({current_lang['code'].upper()})")
     print(f"[PIPELINE] Current Target -> Chapter {chapter}, Verse {verse}")
 
-    # 2. Localized Verse Metadata (Ready for translation / TTS integration)
+    # 2. Localized Verse Metadata
     sanskrit_text = "यदा यदा हि धर्मस्य ग्लानिर्भवति भारत।"
     meaning = f"[{current_lang['name']}] Whenever righteousness declines and unrighteousness prevails, I manifest Myself."
     insight = "True leadership means standing up for moral clarity during times of societal crisis."
@@ -115,7 +116,7 @@ def run_pipeline(root: Path, cfg: dict, fast_mode: bool = False):
     print(f"  ✓ Master Video Exported: {final_video_path}")
 
     # 6. Upload to YouTube & Assign to Language-Specific Playlist
-    print("[PIPELين] Finalizing Distribution & Auto-Upload...")
+    print("[PIPELINE] Finalizing Distribution & Auto-Upload...")
     playlist_id = current_lang["playlist_id"]
     
     try:
@@ -139,7 +140,6 @@ def run_pipeline(root: Path, cfg: dict, fast_mode: bool = False):
     next_chapter = chapter
     next_lang_idx = lang_idx
 
-    # Example transition rule: when all verses of Chapter 18 are done, move to next language
     if chapter > 18 or (chapter == 18 and next_verse > 78):
         print(f"  ✓ Completed all chapters in {current_lang['name']}! Rotating to next language...")
         next_lang_idx += 1
