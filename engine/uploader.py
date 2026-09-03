@@ -82,8 +82,10 @@ def get_or_create_playlist(youtube, title: str) -> str:
         resp = req.execute()
         for pl in resp.get("items", []):
             if pl["snippet"]["title"].strip().lower() == title.strip().lower():
+                print(f"  ✓ Found existing playlist: '{title}' ({pl['id']})")
                 return pl["id"]
 
+        print(f"  [PLAYLIST] Creating public playlist: '{title}'...")
         create_req = youtube.playlists().insert(
             part="snippet,status",
             body={
@@ -95,13 +97,15 @@ def get_or_create_playlist(youtube, title: str) -> str:
             }
         )
         res = create_req.execute()
+        print(f"  ✓ Playlist created successfully: {res['id']}")
         return res["id"]
     except Exception as e:
-        print(f"  [PLAYLIST WARNING] Failed to query/create playlist: {e}")
+        print(f"  [PLAYLIST ERROR] Failed to query/create playlist: {e}")
         return ""
 
 def add_video_to_playlist(youtube, video_id: str, playlist_id: str):
-    if not playlist_id:
+    if not playlist_id or not video_id:
+        print("  [PLAYLIST WARNING] Missing playlist_id or video_id. Skipping link.")
         return
     try:
         youtube.playlistItems().insert(
@@ -116,7 +120,7 @@ def add_video_to_playlist(youtube, video_id: str, playlist_id: str):
                 }
             }
         ).execute()
-        print(f"  ✓ Video linked to playlist: {playlist_id}")
+        print(f"  ✓ Successfully added video {video_id} to playlist ID: {playlist_id}")
     except Exception as e:
         print(f"  [PLAYLIST ERROR] Could not add video to playlist: {e}")
 
@@ -130,6 +134,7 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
     privacy_status = kwargs.get("privacy_status", "public")
     playlist_name = kwargs.get("playlist_name", "Bhagavad Gita • English Edition")
 
+    json_loaded = False
     if len(args) >= 1:
         first = args[0]
         if isinstance(first, (str, Path)):
@@ -146,7 +151,6 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
                     
                     title = f"Bhagavad Gita | Chapter {ch} Verse {vs} #Shorts"
                     
-                    # --- REPLACE OR UPDATE DESCRIPTION WITH THIS TEMPLATE ---
                     description = (
                         f"॥ श्रीमद्भगवद्गीता ॥\n"
                         f"Chapter {ch}, Verse {vs}\n\n"
@@ -164,31 +168,26 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
                         f"--------------------------------------------------\n\n"
                         f"#BhagavadGita #Krishna #Shorts #DailyWisdom #Spirituality #Hinduism #Geeta #mindfulnessforsleep"
                     )
-                    # ---------------------------------------------------------
-
+                    json_loaded = True
                 except Exception as e:
                     print(f"  [DESC ERROR] Failed parsing JSON for description: {e}")
 
-                if len(args) >= 2 and isinstance(args[1], (str, Path)):
-                    project_root = Path(args[1])
+            if len(args) >= 2 and isinstance(args[1], (str, Path)):
+                project_root = Path(args[1])
             elif p.suffix.lower() in [".mp4", ".mov", ".mkv"]:
                 video_path = p
-        elif isinstance(first, dict):
-            ch = first.get("chapter", 1)
-            vs = first.get("verse_number", first.get("verse", 1))
-            title = f"Bhagavad Gita | Ch {ch} Verse {vs} #Shorts"
-            description = f"Chapter {ch}, Verse {vs}\n\n{first.get('meaning', '')}\n\n#BhagavadGita #Krishna #Shorts"
 
-    if len(args) >= 2 and isinstance(args[1], str) and not title:
-        title = args[1]
-    elif len(args) >= 2 and isinstance(args[1], dict):
-        if not title and "title" in args[1]:
-            title = args[1]["title"]
-        if not description and "description" in args[1]:
-            description = args[1]["description"]
+    if not json_loaded:
+        if len(args) >= 2 and isinstance(args[1], str) and not title:
+            title = args[1]
+        elif len(args) >= 2 and isinstance(args[1], dict):
+            if not title and "title" in args[1]:
+                title = args[1]["title"]
+            if not description and "description" in args[1]:
+                description = args[1]["description"]
 
-    if len(args) >= 3 and isinstance(args[2], str) and not description:
-        description = args[2]
+        if len(args) >= 3 and isinstance(args[2], str) and not description:
+            description = args[2]
 
     if "video_path" in kwargs:
         video_path = Path(kwargs["video_path"])
@@ -270,7 +269,7 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
 
     if playlist_name:
         playlist_id = get_or_create_playlist(youtube, playlist_name)
-        if playlist_id:
+        if playlist_id and video_id:
             add_video_to_playlist(youtube, video_id, playlist_id)
 
     return video_url
