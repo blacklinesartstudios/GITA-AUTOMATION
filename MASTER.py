@@ -1,37 +1,35 @@
+import os
+import sys
 from pathlib import Path
-import sys, json, traceback
+from dotenv import load_dotenv
 
-ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(ROOT))
+# Load environment variables (for local runs or GitHub Secrets)
+load_dotenv()
 
-from engine.preflight import run_preflight
+# Ensure project root is in python path
+PROJECT_ROOT = Path(__file__).resolve().parent
+sys.path.append(str(PROJECT_ROOT))
+
 from engine.pipeline import run_pipeline
 
 def main():
-    print("\n=== GITA YOUTUBE AUTO V6 ===\n")
-    fast_mode = "--fast" in sys.argv
-    if fast_mode:
-        print("[MODE] >>> Running Fast Test Render (1080p @ 24fps ultrafast) <<<\n")
+    print("==================================================")
+    print("   BLACKLINES ART STUDIO: GITA AUTOMATION v20   ")
+    print("==================================================")
+    
+    # Configuration dictionary for the studio pipeline
+    config = {
+        "youtube_playlist_id": os.getenv("YOUTUBE_PLAYLIST_ID", "PL_ENGLISH_VERSION_ID_HERE"),
+        "fast_mode": False
+    }
 
     try:
-        cfg = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
-        
-        ok, report = run_preflight(ROOT, cfg)
-        print(report)
-        if not ok:
-            print("\nPREFLIGHT FAILED. Fix the items above and run again.")
-            return 2
-        
-        run_pipeline(ROOT, cfg, fast_mode=fast_mode)
-        
-        print("\nDONE.")
-        return 0
-    except KeyboardInterrupt:
-        print("\nStopped.")
-        return 130
-    except Exception:
-        traceback.print_exc()
-        return 1
+        # Execute the main sequential rollout pipeline
+        run_pipeline(root=PROJECT_ROOT, cfg=config)
+        print("\n[MASTER] Pipeline execution completed successfully!")
+    except Exception as e:
+        print(f"\n[MASTER ERROR] Pipeline failed with error: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
