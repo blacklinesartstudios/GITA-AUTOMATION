@@ -1,20 +1,21 @@
-# Secrets & Credentials
-token.json
-token.pickle
-client_secrets.json
-.env
-
-# Cache and Output Folders
+# Media & Export Binaries
 output/
-outputs/
 cache/
-catch/
-temp/
-tmp/
-__pycache__/
-*.pyc
 *.mp4
+*.mkv
+*.mov
+*.wav
+*.mp3
+*.aac
 
-# Allow all files inside assets
-!assets/
-!assets/**
+# Temporary & Neural Weights
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.cache/
+torch_cache/
+assets/fonts/*.ttf
+
+# Local Auth Secrets
+client_secrets.json
+token.json
