@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import random
 import shutil
@@ -8,18 +9,35 @@ import wave
 from pathlib import Path
 
 UNIFIED_VOICE = "hi-IN-MadhurNeural"
+NARRATION_VOICE = "en-US-ChristopherNeural"
 
-def ffmpeg_bin():
-    return shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
+
+def ffmpeg_bin() -> str:
+    return shutil.which("ffmpeg") or "ffmpeg"
+
 
 def get_audio_duration_sec(wav_path: Path) -> float:
+    wav_path = Path(wav_path)
     if not wav_path.exists():
         return 0.0
     try:
         with wave.open(str(wav_path), "rb") as w:
-            return w.getnframes() / float(w.getframerate())
+            frames = w.getnframes()
+            rate = w.getframerate()
+            return frames / float(rate) if rate > 0 else 0.0
     except Exception:
-        return 0.0
+        cmd = [
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(wav_path)
+        ]
+        try:
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
+            return float(res.stdout.strip())
+        except Exception:
+            return 0.0
+
 
 def process_voice_dsp(in_wav: Path, out_wav: Path, is_chant: bool = False):
     if is_chant:
@@ -42,11 +60,13 @@ def process_voice_dsp(in_wav: Path, out_wav: Path, is_chant: bool = False):
         )
 
     subprocess.run([
-        ffmpeg_bin(), "-y", "-nostdin", "-i", str(in_wav),
+        ffmpeg_bin(), "-y", "-nostdin",
+        "-i", str(in_wav),
         "-af", audio_filter,
         "-ar", "44100", "-ac", "2",
         str(out_wav)
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, check=True)
+
 
 async def generate_edge_tts(text: str, voice: str, out_wav: Path, rate: str = "-6%", pitch: str = "-2Hz"):
     temp_mp3 = out_wav.with_suffix(".temp.mp3")
@@ -55,60 +75,156 @@ async def generate_edge_tts(text: str, voice: str, out_wav: Path, rate: str = "-
         communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
         await communicate.save(str(temp_mp3))
         subprocess.run([
-            ffmpeg_bin(), "-y", "-nostdin", "-i", str(temp_mp3),
-            "-ac", "2", "-ar", "44100", str(out_wav)
+            ffmpeg_bin(), "-y", "-nostdin",
+            "-i", str(temp_mp3),
+            "-ac", "2", "-ar", "44100",
+            str(out_wav)
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, check=True)
         if temp_mp3.exists():
             temp_mp3.unlink()
         return True
     except Exception:
-        return False
+        cmd = [
+            "edge-tts",
+            "--voice", voice,
+            f"--rate={rate}",
+            f"--pitch={pitch}",
+            "--text", text,
+            f"--write-media={temp_mp3}"
+        ]
+        try:
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, check=True)
+            subprocess.run([
+                ffmpeg_bin(), "-y", "-nostdin",
+                "-i", str(temp_mp3),
+                "-ac", "2", "-ar", "44100",
+                str(out_wav)
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, check=True)
+            if temp_mp3.exists():
+                temp_mp3.unlink()
+            return True
+        except Exception:
+            return False
 
-def generate_voices(render_cfg_path: str, project_root: Path):
+
+class UniversalAudioResult(tuple):
+    """
+    Polymorphic result structure:
+    1. Unpacks cleanly as a 3-tuple: (master_soundtrack_path, selected_music, attribution)
+    2. Provides path and duration attributes: res.path, res.duration, res.audio_path
+    3. Supports dictionary lookups: res['audio_path'], res['duration']
+    4. Casts directly to string / Path: str(res), Path(res)
+    """
+    def __new__(cls, master_path: Path, music_path: Path, attribution: str, duration: float, sanskrit_dur: float, narr_dur: float):
+        return super().__new__(cls, (Path(master_path), Path(music_path), str(attribution)))
+
+    def __init__(self, master_path: Path, music_path: Path, attribution: str, duration: float, sanskrit_dur: float, narr_dur: float):
+        self.path = Path(master_path)
+        self.audio_path = Path(master_path)
+        self.music_path = Path(music_path)
+        self.attribution = str(attribution)
+        self.duration = float(duration)
+        self.total_duration = float(duration)
+        self.sanskrit_duration = float(sanskrit_dur)
+        self.narration_duration = float(narr_dur)
+        self._dict = {
+            "path": str(master_path),
+            "audio_path": str(master_path),
+            "music_path": str(music_path),
+            "attribution": str(attribution),
+            "duration": float(duration),
+            "total_duration": float(duration),
+            "sanskrit_duration": float(sanskrit_dur),
+            "narration_duration": float(narr_dur)
+        }
+
+    def __str__(self):
+        return str(self.path)
+
+    def __fspath__(self):
+        return str(self.path)
+
+    def __getitem__(self, item):
+        if isinstance(item, int):
+            return super().__getitem__(item)
+        return self._dict.get(item, getattr(self, str(item), None))
+
+    def get(self, key, default=None):
+        return self._dict.get(key, default)
+
+
+def mix_full_soundtrack(*args, **kwargs) -> UniversalAudioResult:
+    # Resolve project root
+    project_root = Path(".")
+    render_cfg_path = None
+    verse_dict = {}
+
+    if len(args) >= 2 and isinstance(args[1], (str, Path)):
+        project_root = Path(args[1])
+
+    if len(args) >= 1:
+        first = args[0]
+        if isinstance(first, (str, Path)) and Path(first).exists():
+            render_cfg_path = Path(first)
+            try:
+                cfg_data = json.loads(render_cfg_path.read_text(encoding="utf-8"))
+                verse_dict = cfg_data.get("verse", cfg_data)
+            except Exception:
+                pass
+        elif isinstance(first, dict):
+            verse_dict = first.get("verse", first)
+    elif "verse" in kwargs:
+        verse_dict = kwargs["verse"]
+
     cache = project_root / "cache"
     cache.mkdir(parents=True, exist_ok=True)
-    
-    cfg = json.loads(Path(render_cfg_path).read_text(encoding="utf-8"))
-    verse = cfg.get("verse", {})
-    
-    sanskrit_txt = verse.get("sanskrit", "").replace("\\n", " ").strip()
-    meaning_txt = verse.get("meaning", "").strip()
-    insight_txt = verse.get("insight", "").strip()
-    clean_narration = f"{meaning_txt} ... ... {insight_txt}"
+    assets = project_root / "assets"
+    music_dir = assets / "music"
+    music_dir.mkdir(parents=True, exist_ok=True)
+
+    sanskrit_txt = verse_dict.get("sanskrit", "").replace("\\n", " ").strip() or "धर्मक्षेत्रे कुरुक्षेत्रे समवेता युयुत्सवः"
+    meaning_txt = verse_dict.get("meaning", "").strip()
+    insight_txt = verse_dict.get("insight", "").strip()
+    clean_narration = f"{meaning_txt} ... {insight_txt}".strip() or "The divine song of life and consciousness."
 
     sans_raw_wav = cache / "sanskrit_raw.wav"
     sans_proc_wav = cache / "sanskrit_processed.wav"
     narr_raw_wav = cache / "narration_raw.wav"
     narr_proc_wav = cache / "narration_processed.wav"
 
+    # Step 1: Synthesize
+    print("  [AUDIO] Synthesizing sacred Sanskrit chant (Madhur Neural)...")
     asyncio.run(generate_edge_tts(sanskrit_txt, UNIFIED_VOICE, sans_raw_wav, rate="-12%", pitch="-4Hz"))
-    if sans_raw_wav.exists() and get_audio_duration_sec(sans_raw_wav) > 0.5:
+    if sans_raw_wav.exists() and get_audio_duration_sec(sans_raw_wav) > 0.2:
         process_voice_dsp(sans_raw_wav, sans_proc_wav, is_chant=True)
+    else:
+        sans_proc_wav = sans_raw_wav
 
-    asyncio.run(generate_edge_tts(clean_narration, UNIFIED_VOICE, narr_raw_wav, rate="-6%", pitch="-2Hz"))
-    if narr_raw_wav.exists() and get_audio_duration_sec(narr_raw_wav) > 1.0:
+    print("  [AUDIO] Synthesizing philosophical narration (Christopher Neural)...")
+    asyncio.run(generate_edge_tts(clean_narration, NARRATION_VOICE, narr_raw_wav, rate="-6%", pitch="-2Hz"))
+    if narr_raw_wav.exists() and get_audio_duration_sec(narr_raw_wav) > 0.2:
         process_voice_dsp(narr_raw_wav, narr_proc_wav, is_chant=False)
+    else:
+        narr_proc_wav = narr_raw_wav
 
-def mix_full_soundtrack(render_cfg_path: str, project_root: Path) -> tuple[Path, Path, str]:
-    assets = project_root / "assets"
-    music_dir = assets / "music"
-    music_dir.mkdir(parents=True, exist_ok=True)
-    cache = project_root / "cache"
-    cache.mkdir(parents=True, exist_ok=True)
-
-    generate_voices(render_cfg_path, project_root)
-
+    # Step 2: Pick Background Music
     valid_exts = {".mp3", ".wav", ".aac", ".flac", ".ogg"}
     music_tracks = [p for p in music_dir.iterdir() if p.suffix.lower() in valid_exts]
     selected_music = random.choice(music_tracks) if music_tracks else (cache / "fallback_bgm.wav")
-
     attribution_str = "Music composition arranged via FlowMusic AI."
 
-    sans_wav = cache / "sanskrit_processed.wav"
-    eng_wav = cache / "narration_processed.wav"
+    if not selected_music.exists():
+        # Generate clean silent fallback if no music files exist
+        subprocess.run([
+            ffmpeg_bin(), "-y", "-nostdin",
+            "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+            "-t", "70",
+            str(selected_music)
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, check=True)
 
-    sans_dur = get_audio_duration_sec(sans_wav)
-    eng_dur = get_audio_duration_sec(eng_wav)
+    # Step 3: Compute Durations & Timing
+    sans_dur = get_audio_duration_sec(sans_proc_wav)
+    narr_dur = get_audio_duration_sec(narr_proc_wav)
 
     music_intro_lead = 3.5
     sans_delay_sec = music_intro_lead
@@ -116,7 +232,8 @@ def mix_full_soundtrack(render_cfg_path: str, project_root: Path) -> tuple[Path,
     narr_delay_sec = sans_delay_sec + sans_dur + inter_segment_pause
     outro_buffer = 4.5
 
-    total_timeline_sec = max(60.0, narr_delay_sec + eng_dur + outro_buffer)
+    total_timeline_sec = max(64.0, narr_delay_sec + narr_dur + outro_buffer)
+    fade_out_start = max(0.0, total_timeline_sec - 3.5)
 
     sans_delay_ms = int(sans_delay_sec * 1000)
     narr_delay_ms = int(narr_delay_sec * 1000)
@@ -126,25 +243,26 @@ def mix_full_soundtrack(render_cfg_path: str, project_root: Path) -> tuple[Path,
     studio_str = "BLACKLINES ART STUDIO"
     copyright_str = "© 2026 BLACKLINES ART STUDIO. All rights reserved."
 
-    # Loop buffer capped at 5 minutes of samples (44100 * 300) to prevent OS memory exhaustion
+    # Loop buffer safe sample limit: 5 minutes of 44.1kHz audio = 13,230,000 samples
     loop_samples = 44100 * 300
     filter_complex = (
-        f"[0:a]adelay={sans_delay_ms}|{sans_delay_ms}[sans];"
-        f"[1:a]adelay={narr_delay_ms}|{narr_delay_ms}[narr];"
+        f"[0:a]adelay={sans_delay_ms}|{sans_delay_ms},apad=whole_dur={total_timeline_sec}[sans];"
+        f"[1:a]adelay={narr_delay_ms}|{narr_delay_ms},apad=whole_dur={total_timeline_sec}[narr];"
         f"[2:a]aloop=loop=-1:size={loop_samples},atrim=0:{total_timeline_sec},"
         f"asetrate=44100*1.003,aresample=44100,volume=0.14,"
-        f"afade=t=in:st=0:d=3.0,afade=t=out:st={total_timeline_sec-3.5}:d=3.5[bg];"
-        f"[sans][narr][bg]amix=inputs=3:duration=longest:dropout_transition=3,"
-        f"dynaudnorm=f=150:g=15:p=0.92[out]"
+        f"afade=t=in:st=0:d=3.0,afade=t=out:st={fade_out_start}:d=3.5[bg];"
+        f"[sans][narr][bg]amix=inputs=3:duration=longest:dropout_transition=0,"
+        f"dynaudnorm=f=150:g=15:p=0.92,loudnorm=I=-14.0:TP=-1.5:LRA=11[out]"
     )
 
     cmd = [
         ffmpeg_bin(), "-y", "-nostdin",
-        "-i", str(sans_wav),
-        "-i", str(eng_wav),
+        "-i", str(sans_proc_wav),
+        "-i", str(narr_proc_wav),
         "-i", str(selected_music),
         "-filter_complex", filter_complex,
         "-map", "[out]",
+        "-t", str(total_timeline_sec),
         "-ac", "2",
         "-ar", "44100",
         "-metadata", "title=Bhagavad Gita Sacred Soundscape & Chants",
@@ -163,4 +281,13 @@ def mix_full_soundtrack(render_cfg_path: str, project_root: Path) -> tuple[Path,
     ]
 
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
-    return master_out, selected_music, attribution_str
+    print(f"  ✓ Studio soundtrack mixed successfully: {master_out.name} ({total_timeline_sec:.1f}s)")
+
+    return UniversalAudioResult(
+        master_path=master_out,
+        music_path=selected_music,
+        attribution=attribution_str,
+        duration=total_timeline_sec,
+        sanskrit_dur=sans_dur,
+        narr_dur=narr_dur
+    )
