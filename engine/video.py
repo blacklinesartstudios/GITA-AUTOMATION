@@ -747,9 +747,9 @@ def mux(video, audio, out, chapter=1, verse=1):
     
     title_str = f"Srimad Bhagavad Gita - Chapter {chapter} Verse {verse}"
     author_str = "Venkatesh Marturu"
-    studio_str = "BLACKLINES ART STUDIO"
-    copyright_str = "© 2026 BLACKLINES ART STUDIO. All rights reserved."
-    desc_str = f"Official studio master for Srimad Bhagavad Gita Chapter {chapter} Verse {verse}. Produced, designed, and mastered by Venkatesh Marturu at BLACKLINES ART STUDIO."
+    studio_str = "@BhagavadGita-slokha"
+    copyright_str = "© 2026 @BhagavadGita-slokha. All rights reserved."
+    desc_str = f"Official studio master for Srimad Bhagavad Gita Chapter {chapter} Verse {verse}. Produced, designed, and mastered by Venkatesh Marturu at @BhagavadGita-slokha."
 
     cmd = [
         ffmpeg(), "-y",
@@ -779,8 +779,8 @@ def mux(video, audio, out, chapter=1, verse=1):
         "-metadata", f"synopsis={desc_str}",
         "-metadata", "rating=5",
         "-metadata", "rating_percent=99",
-        "-metadata", "service_name=BLACKLINES ART STUDIO",
-        "-metadata", "service_provider=BLACKLINES ART STUDIO",
+        "-metadata", "service_name=@BhagavadGita-slokha",
+        "-metadata", "service_provider=@BhagavadGita-slokha",
         "-metadata", "encoder=Adobe Premiere Pro 2026 (Windows)",
         "-metadata:s:v:0", "handler_name=Blacklines Studio Video Renderer",
         "-metadata:s:a:0", "handler_name=Blacklines High Fidelity Master Audio",
