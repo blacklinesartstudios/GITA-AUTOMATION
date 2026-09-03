@@ -449,17 +449,28 @@ def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_au
     meaning_chars_layout = compute_char_layout(meaning_lines, mean_start_y, mean_heights, LAYOUT["meaning_line_spacing"], f_meaning, d_m, canvas_width=w)
     moment_chars_layout = compute_char_layout(moment_lines, box3_top + PAD_Y + mom_hd_h + 18, mom_heights, LAYOUT["moment_line_spacing"], f_moment, d_m, canvas_width=w) if moment_lines else []
 
-    sanskrit_voice_start = 3.5
-    sanskrit_voice_end = sanskrit_voice_start + max(4.0, sans_dur)
-    narration_voice_start = sanskrit_voice_end + 1.6
-
+    # =========================================================================
+    # DYNAMIC TIME-MAPPING SCALED TO EXACT TOTAL AUDIO DURATION
+    # =========================================================================
+    # Distribute available timeline proportionally based on actual audio length
+    avail_time = max(10.0, total_audio_duration - 4.0)
+    
+    sanskrit_voice_start = 2.0
+    sanskrit_voice_end = sanskrit_voice_start + max(3.0, avail_time * 0.28)
+    
+    narration_voice_start = sanskrit_voice_end + 0.8
+    
     len_mean = max(1, len(meaning_chars_layout))
     len_mom = len(moment_chars_layout)
-    tot_c = len_mean + len_mom
-    actual_eng = max(6.0, eng_dur)
-    meaning_voice_end = narration_voice_start + (actual_eng * (len_mean / float(tot_c))) if len_mom > 0 else (narration_voice_start + actual_eng)
-    moment_voice_start = meaning_voice_end + 1.6
-    moment_voice_end = moment_voice_start + (actual_eng * (len_mom / float(tot_c))) if len_mom > 0 else moment_voice_start
+    tot_c = len_mean + (len_mom if len_mom > 0 else 0)
+    
+    remaining_time = max(4.0, total_audio_duration - narration_voice_start - 2.0)
+    mean_allotted = remaining_time * (len_mean / float(tot_c)) if tot_c > 0 else remaining_time
+    
+    meaning_voice_end = narration_voice_start + mean_allotted
+    moment_voice_start = meaning_voice_end + 0.8
+    moment_voice_end = total_audio_duration - 1.5 if len_mom > 0 else moment_voice_start
+    # =========================================================================
 
     border_img = draw_programmatic_gold_frame(w, h)
     border_bgr, border_alpha = rgba_to_bgr_and_alpha(border_img)
@@ -503,12 +514,12 @@ def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_au
         "box1_bgr": box1_bgr, "box1_alpha": box1_alpha,
         "box2_bgr": box2_bgr, "box2_alpha": box2_alpha,
         "box3_bgr": box3_bgr, "box3_alpha": box3_alpha,
-        "t_border_fade_in": (0.5, 2.0),
-        "t_title_fade_in": (0.8, 2.4),
-        "t_box1_fade_in": (2.0, 3.2),
-        "t_box2_fade_in": (sanskrit_voice_end + 0.4, sanskrit_voice_end + 1.4),
-        "t_box3_fade_in": (meaning_voice_end + 0.4, meaning_voice_end + 1.4),
-        "global_ui_fade_out": (max(moment_voice_end + 1.5, total_audio_duration - 3.5), total_audio_duration - 1.2),
+        "t_border_fade_in": (0.3, 1.2),
+        "t_title_fade_in": (0.5, 1.5),
+        "t_box1_fade_in": (1.2, 2.0),
+        "t_box2_fade_in": (sanskrit_voice_end + 0.2, sanskrit_voice_end + 0.8),
+        "t_box3_fade_in": (meaning_voice_end + 0.2, meaning_voice_end + 0.8),
+        "global_ui_fade_out": (max(total_audio_duration - 2.5, total_audio_duration - 3.5), total_audio_duration - 0.5),
         "timed_sanskrit_chars": calculate_char_times(sanskrit_chars_layout, sanskrit_voice_start, sanskrit_voice_end),
         "timed_meaning_chars": calculate_char_times(meaning_chars_layout, narration_voice_start, meaning_voice_end),
         "timed_moment_chars": calculate_char_times(moment_chars_layout, moment_voice_start, moment_voice_end)
