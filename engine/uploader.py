@@ -3,191 +3,192 @@ import sys
 import json
 import time
 from pathlib import Path
+from google.oauth2.credentials import Credentials
+from google.auth.transport.requests import Request
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from googleapiclient.errors import HttpError
 
-def get_authenticated_service(project_root: Path):
-    """
-    Authenticates with YouTube Data API v3 using token.json or client_secrets.json.
-    Guards against headless browser hangs on GitHub Actions.
-    """
-    try:
-        from google.oauth2.credentials import Credentials
-        from google_auth_oauthlib.flow import InstalledAppFlow
-        from google.auth.transport.requests import Request
-        from googleapiclient.discovery import build
-    except ImportError:
-        print("  [UPLOAD ERROR] Google API client libraries not installed.")
-        print("  Run: pip install google-api-python-client google-auth-oauthlib google-auth-httplib2")
-        return None
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube",
+    "https://www.googleapis.com/auth/youtube.force-ssl"
+]
 
-    scopes = [
-        "https://www.googleapis.com/auth/youtube.upload",
-        "https://www.googleapis.com/auth/youtube"
-    ]
 
-    project_root = Path(project_root).resolve()
-    token_path = project_root / "token.json"
-    client_secrets_path = project_root / "client_secrets.json"
+def is_headless() -> bool:
+    """Returns True if executing inside CI or without an active graphical display."""
+    if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
+        return True
+    if sys.platform != "win32" and not os.environ.get("DISPLAY"):
+        return True
+    return False
+
+
+def get_authenticated_service(project_root: Path = Path(".")):
+    project_root = Path(project_root)
+    token_file = project_root / "token.json"
+    client_secrets_file = project_root / "client_secrets.json"
+
+    # Inject from environment if provided
+    env_token = os.environ.get("YOUTUBE_TOKEN_JSON")
+    if env_token and env_token.strip():
+        token_file.write_text(env_token.strip(), encoding="utf-8")
+
+    env_secrets = os.environ.get("CLIENT_SECRETS_JSON")
+    if env_secrets and env_secrets.strip():
+        client_secrets_file.write_text(env_secrets.strip(), encoding="utf-8")
 
     creds = None
-    if token_path.exists():
-        try:
-            creds = Credentials.from_authorized_user_file(str(token_path), scopes)
-        except Exception as e:
-            print(f"  [UPLOAD WARNING] Error reading token.json: {e}")
 
-    is_ci = os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("CI") == "true"
+    if token_file.exists():
+        try:
+            token_data = json.loads(token_file.read_text(encoding="utf-8"))
+            creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+        except Exception as e:
+            print(f"  [AUTH WARNING] Failed reading token.json: {e}")
+            creds = None
 
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
+            print("  [AUTH] Refreshing expired OAuth access token via Google Cloud...")
             try:
-                print("  [UPLOAD] Refreshing expired OAuth access token...")
                 creds.refresh(Request())
-                token_path.write_text(creds.to_json(), encoding="utf-8")
+                token_file.write_text(creds.to_json(), encoding="utf-8")
                 print("  ✓ Access token refreshed successfully.")
             except Exception as e:
-                print(f"  [UPLOAD ERROR] Could not refresh token: {e}")
+                print(f"  [AUTH ERROR] Token refresh failed: {e}")
                 creds = None
 
-        if not creds and client_secrets_path.exists():
-            if is_ci:
-                print("  [UPLOAD ERROR] Running in headless CI (GitHub Actions). Interactive browser login unavailable.")
-                print("  Please ensure YOUTUBE_TOKEN_JSON secret contains a valid refresh_token.")
-                return None
-            try:
-                print("  [UPLOAD] Starting local browser OAuth login...")
-                flow = InstalledAppFlow.from_client_secrets_file(str(client_secrets_path), scopes)
-                creds = flow.run_local_server(port=0)
-                token_path.write_text(creds.to_json(), encoding="utf-8")
-                print("  ✓ New token.json generated and saved.")
-            except Exception as e:
-                print(f"  [UPLOAD ERROR] OAuth flow failed: {e}")
-                return None
+    if not creds or not creds.valid:
+        if is_headless():
+            raise RuntimeError(
+                "[CRITICAL AUTH FAILURE] Running in headless CI (GitHub Actions). "
+                "Interactive browser login is disabled. "
+                "Please ensure the 'YOUTUBE_TOKEN_JSON' repository secret contains a valid OAuth refresh token."
+            )
+        
+        if not client_secrets_file.exists():
+            raise FileNotFoundError(
+                f"Missing {client_secrets_file}. Please download it from Google Cloud Console "
+                "and place it in your root directory."
+            )
 
-    if not creds:
-        print("  [UPLOAD ERROR] No valid YouTube credentials found on system.")
-        return None
+        print("  [AUTH] Initiating one-time local OAuth browser login...")
+        flow = InstalledAppFlow.from_client_secrets_file(str(client_secrets_file), SCOPES)
+        creds = flow.run_local_server(port=0)
+        token_file.write_text(creds.to_json(), encoding="utf-8")
+        print("  ✓ New token.json generated and saved successfully.")
 
     return build("youtube", "v3", credentials=creds)
 
+
+def get_or_create_playlist(youtube, title: str) -> str:
+    try:
+        req = youtube.playlists().list(part="snippet", mine=True, maxResults=50)
+        resp = req.execute()
+        for pl in resp.get("items", []):
+            if pl["snippet"]["title"].strip().lower() == title.strip().lower():
+                return pl["id"]
+
+        create_req = youtube.playlists().insert(
+            part="snippet,status",
+            body={
+                "snippet": {
+                    "title": title,
+                    "description": "Daily Sacred Bhagavad Gita Verses • Original Sanskrit Chants & Studio Narration."
+                },
+                "status": {"privacyStatus": "public"}
+            }
+        )
+        res = create_req.execute()
+        return res["id"]
+    except Exception as e:
+        print(f"  [PLAYLIST WARNING] Could not manage playlist: {e}")
+        return ""
+
+
 def add_video_to_playlist(youtube, video_id: str, playlist_id: str):
-    """Inserts uploaded Short into the designated language playlist."""
-    if not playlist_id or playlist_id.startswith("PL_"):
+    if not playlist_id:
         return
     try:
-        request_body = {
-            "snippet": {
-                "playlistId": playlist_id,
-                "resourceId": {
-                    "kind": "youtube#video",
-                    "videoId": video_id
-                }
-            }
-        }
         youtube.playlistItems().insert(
             part="snippet",
-            body=request_body
+            body={
+                "snippet": {
+                    "playlistId": playlist_id,
+                    "resourceId": {
+                        "kind": "youtube#video",
+                        "videoId": video_id
+                    }
+                }
+            }
         ).execute()
         print(f"  ✓ Video added to playlist: {playlist_id}")
     except Exception as e:
-        print(f"  [UPLOAD WARNING] Could not add video to playlist {playlist_id}: {e}")
+        print(f"  [PLAYLIST ERROR] Failed adding video to playlist: {e}")
 
-def upload_short_to_youtube(
+
+def upload_to_youtube(
     video_path: Path,
-    chapter: int,
-    verse: int,
-    sanskrit: str,
-    meaning: str,
-    insight: str,
-    project_root: Path,
-    music_attribution: str = "",
-    schedule: bool = False,
-    playlist_id: str = None,
-    **kwargs
-) -> str | None:
-    """
-    Uploads the master 9:16 Short to YouTube, assigns metadata, and links to playlists.
-    """
-    video_path = Path(video_path).resolve()
-    if not video_path.exists():
-        print(f"  [UPLOAD ERROR] Target video not found at: {video_path}")
-        return None
-
+    title: str,
+    description: str,
+    tags: list = None,
+    category_id: str = "27",  # Education
+    privacy_status: str = "public",
+    playlist_name: str = "Bhagavad Gita • English Edition",
+    project_root: Path = Path(".")
+) -> str:
     youtube = get_authenticated_service(project_root)
-    if not youtube:
-        print(f"  [UPLOAD FAILED] Authentication failed. Video remains saved locally at: {video_path.name}")
-        return None
+    tags = tags or ["BhagavadGita", "Krishna", "Spirituality", "Shorts", "DailyWisdom"]
 
-    try:
-        from googleapiclient.http import MediaFileUpload
-
-        title = f"Bhagavad Gita | Chapter {chapter}, Verse {verse} #Shorts #Gita"
-        if len(title) > 100:
-            title = title[:97] + "..."
-
-        description = (
-            f"॥ श्रीमद्भगवद्गीता ॥\n"
-            f"Chapter {chapter}, Verse {verse}\n\n"
-            f"श्लोक:\n{sanskrit}\n\n"
-            f"Meaning:\n{meaning}\n\n"
-            f"Practical Insight:\n{insight}\n\n"
-            f"---\n"
-            f"{music_attribution}\n"
-            f"Produced by BLACKLINES ART STUDIO\n"
-            f"#Shorts #BhagavadGita #Krishna #SpiritualWisdom #AncientWisdom #Mindset"
-        )
-
-        tags = [
-            "Bhagavad Gita",
-            f"Chapter {chapter}",
-            f"Verse {verse}",
-            "Krishna",
-            "Spiritual Wisdom",
-            "Shorts",
-            "Motivation",
-            "Philosophy"
-        ]
-
-        body = {
-            "snippet": {
-                "title": title,
-                "description": description,
-                "tags": tags,
-                "categoryId": "27"  # Education
-            },
-            "status": {
-                "privacyStatus": "public",
-                "selfDeclaredMadeForKids": False
-            }
+    body = {
+        "snippet": {
+            "title": title[:100],
+            "description": description[:5000],
+            "tags": tags,
+            "categoryId": category_id
+        },
+        "status": {
+            "privacyStatus": privacy_status,
+            "selfDeclaredMadeForKids": False
         }
+    }
 
-        media = MediaFileUpload(
-            str(video_path),
-            chunksize=-1,
-            resumable=True,
-            mimetype="video/mp4"
-        )
+    media = MediaFileUpload(
+        str(video_path),
+        mimetype="video/mp4",
+        chunksize=1024 * 1024 * 4,
+        resumable=True
+    )
 
-        print(f"  [UPLOAD] Uploading {video_path.name} to YouTube...")
-        request = youtube.videos().insert(
-            part="snippet,status",
-            body=body,
-            media_body=media
-        )
+    print(f"  [UPLOADER] Initiating upload for: {video_path.name}")
+    request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
-        response = None
-        while response is None:
+    response = None
+    retry_count = 0
+    while response is None:
+        try:
             status, response = request.next_chunk()
             if status:
-                print(f"    Uploaded {int(status.progress() * 100)}%...")
+                print(f"  [UPLOAD PROGRESS] {int(status.progress() * 100)}% uploaded...")
+        except HttpError as e:
+            if e.resp.status in [500, 502, 503, 504]:
+                retry_count += 1
+                if retry_count > 5:
+                    raise
+                time.sleep(retry_count * 2)
+            else:
+                raise
 
-        video_id = response.get("id")
-        print(f"  ✓ Video successfully uploaded: https://youtu.be/{video_id}")
+    video_id = response.get("id")
+    video_url = f"https://youtu.be/{video_id}"
+    print(f"  ✓ Video published successfully: {video_url}")
 
+    if playlist_name:
+        playlist_id = get_or_create_playlist(youtube, playlist_name)
         if playlist_id:
             add_video_to_playlist(youtube, video_id, playlist_id)
 
-        return video_id
-
-    except Exception as e:
-        print(f"  [UPLOAD ERROR] API upload failed: {e}")
-        return None
+    return video_url
