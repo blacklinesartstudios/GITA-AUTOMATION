@@ -585,7 +585,30 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
 
             img = cv2.imread(str(img_path))
             if img is None:
-                continue
+                continue  
+            # ==========================================
+            # INSERT WATERMARK REMOVAL RIGHT HERE:
+            # ==========================================
+            h_img, w_img = img.shape[:2]
+            logo_box_y1, logo_box_y2 = int(h_img * 0.94), h_img
+            logo_box_x1, logo_box_x2 = int(w_img * 0.82), w_img
+            img[logo_box_y1:logo_box_y2, logo_box_x1:logo_box_x2] = (15, 15, 15)
+            # ==========================================
+
+            orig_h, orig_w = img.shape[:2]
+            aspect_target = w / float(h)
+            if (orig_w / float(orig_h)) > aspect_target:
+                new_w = int(orig_h * aspect_target)
+                offset = (orig_w - new_w) // 2
+                img_cropped = img[:, offset:offset+new_w]
+                depth_slice = (slice(None), slice(offset, offset+new_w))
+            else:
+                new_h = int(orig_w / aspect_target)
+                offset = (orig_h - new_h) // 2
+                img_cropped = img[offset:offset+new_h, :]
+                depth_slice = (slice(offset, offset+new_h), slice(None))
+
+            img_overscanned = cv2.resize(img_cropped, (ow, oh), interpolation=cv2.INTER_CUBIC)
 
             orig_h, orig_w = img.shape[:2]
             aspect_target = w / float(h)
