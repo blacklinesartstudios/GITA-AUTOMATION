@@ -265,11 +265,20 @@ def compute_char_layout(lines, start_y, heights, line_spacing, font, draw, canva
         line_w = line_bbox[2] - line_bbox[0]
         start_x = (canvas_width - line_w) // 2
         running_text = ""
-        for ch in line.split(" "):
+        
+        words = line.split(" ")
+        for w_idx, word in enumerate(words):
+            if not word:
+                continue
             prefix_bbox = draw.textbbox((0, 0), running_text, font=font) if running_text else (0, 0, 0, 0)
             prefix_w = prefix_bbox[2] - prefix_bbox[0]
-            chars_info.append({"char": ch, "pos": (start_x + prefix_w, cur_y)})
-            running_text += ch
+            
+            # Keep key as 'char' so render_karaoke_chars works without modifications
+            chars_info.append({"char": word, "pos": (start_x + prefix_w, cur_y)})
+            
+            # Append word plus the space back into running text for accurate spacing
+            running_text += word + (" " if w_idx < len(words) - 1 else "")
+            
         cur_y += heights[i] + line_spacing
     return chars_info
 
