@@ -25,10 +25,10 @@ _TORCH_DEVICE = None
 
 
 # =====================================================================
-# 1. 3D DEPTH MAP ENGINE WITH PERSISTENT CACHING
+# 1. 3D DEPTH MAP ENGINE (HIGH-CONTRAST DEPTH ANYTHING + MIDAS)
 # =====================================================================
 
-def get_midAS_model(model_type="MiDaS_small"):
+def get_midas_model(model_type="MiDaS_small"):
     global _MIDAS_MODEL, _MIDAS_TRANSFORMS, _TORCH_DEVICE
     if torch is None:
         return None, None, None
@@ -49,16 +49,7 @@ def generate_and_save_depth_map(img_input, target_depth_path: Path) -> np.ndarra
     target_depth_path = Path(target_depth_path)
     target_depth_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Cache Check: Reuse existing depth maps to minimize CPU load
-    if target_depth_path.exists() and target_depth_path.stat().st_size > 1024:
-        depth_cached = cv2.imread(str(target_depth_path), cv2.IMREAD_GRAYSCALE)
-        if depth_cached is not None and depth_cached.shape[0] > 100:
-            print(f"  [DEPTH CACHE HIT] Reusing cached depth map: {target_depth_path.name}")
-            return depth_cached
-
-    print(f"  [DEPTH COMPUTE] Generating new depth map: {target_depth_path.name}...")
-
-    # Option A: ONNX Depth Anything v2
+    # 1. Primary: High-contrast ONNX Depth Anything v2
     try:
         from engine.depth import make_depth
         if isinstance(img_input, (str, Path)) and Path(img_input).exists():
@@ -72,19 +63,19 @@ def generate_and_save_depth_map(img_input, target_depth_path: Path) -> np.ndarra
 
         if target_depth_path.exists():
             depth_u8 = cv2.imread(str(target_depth_path), cv2.IMREAD_GRAYSCALE)
-            if depth_u8 is not None:
+            if depth_u8 is not None and depth_u8.std() > 8.0:
                 return depth_u8
     except Exception as e:
         print(f"  [DEPTH] ONNX Depth-Anything fallback to MiDaS: {e}")
 
-    # Option B: PyTorch MiDaS fallback
+    # 2. Secondary Fallback: PyTorch MiDaS
     img_bgr = img_input if isinstance(img_input, np.ndarray) else cv2.imread(str(img_input))
     if img_bgr is None:
         fallback_map = np.full((1920, 1080), 128, dtype=np.uint8)
         cv2.imwrite(str(target_depth_path), fallback_map)
         return fallback_map
 
-    model, transform, device = get_midAS_model("MiDaS_small")
+    model, transform, device = get_midas_model("MiDaS_small")
     if model is not None:
         img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
         input_batch = transform(img_rgb).to(device)
@@ -100,8 +91,9 @@ def generate_and_save_depth_map(img_input, target_depth_path: Path) -> np.ndarra
 
         depth_map = prediction.cpu().numpy()
         d_min, d_max = depth_map.min(), depth_map.max()
-        depth_norm = (depth_map - d_min) / (d_max - d_min) if d_max - d_min > 0 else np.zeros_like(depth_map)
-        depth_norm = np.power(depth_norm, 1.4)
+        depth_norm = (depth_map - d_min) / (d_max - d_min) if (d_max - d_min) > 1e-5 else np.zeros_like(depth_map)
+        # 1.5 power curve boosts separation between foreground and background
+        depth_norm = np.power(depth_norm, 1.5)
         depth_u8 = (depth_norm * 255.0).astype(np.uint8)
         cv2.imwrite(str(target_depth_path), depth_u8)
         return depth_u8
@@ -112,7 +104,7 @@ def generate_and_save_depth_map(img_input, target_depth_path: Path) -> np.ndarra
 
 
 # =====================================================================
-# 2. INDIC TYPOGRAPHY & LIGATURE-SAFE RENDERER
+# 2. TYPOGRAPHY & WORD-BY-WORD SYNCHRONIZATION
 # =====================================================================
 
 def convert_to_devanagari_num(text_str: str) -> str:
@@ -146,9 +138,10 @@ LAYOUT = {
     "bottom_safe_area": 140
 }
 
-SHINE_DURATION = 0.26
+# 350ms bright radiant gold flash on word appearance
+SHINE_DURATION = 0.35
 GOLD_SHINE = (255, 245, 160, 255)
-GOLD_GLOW_BACK = (255, 215, 0, 180)
+GOLD_GLOW_BACK = (255, 215, 0, 220)
 
 FONT_DOWNLOAD_URLS = {
     "NotoSerifDevanagari-Bold.ttf": "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSerifDevanagari/NotoSerifDevanagari-Bold.ttf",
@@ -251,7 +244,8 @@ def measure_lines_height(draw, lines, font, line_spacing):
 
 def compute_word_layout(lines, start_y, heights, line_spacing, font, draw, canvas_width=1080):
     """
-    Computes text layouts word-by-word to preserve Devanagari ligatures (क्ष, त्र, ज्ञ, र्).
+    Measures exact positions for each word.
+    Keeps entire words intact to prevent broken Devanagari ligatures (क्ष, त्र, ज्ञ, र्).
     """
     words_info = []
     cur_y = start_y
@@ -263,11 +257,9 @@ def compute_word_layout(lines, start_y, heights, line_spacing, font, draw, canva
         line_w = line_bbox[2] - line_bbox[0]
         start_x = (canvas_width - line_w) // 2
 
-        words = line.split(" ")
+        words = [w for w in line.split(" ") if w]
         running_prefix = ""
         for word in words:
-            if not word:
-                continue
             prefix_bbox = draw.textbbox((0, 0), running_prefix, font=font) if running_prefix else (0, 0, 0, 0)
             prefix_w = prefix_bbox[2] - prefix_bbox[0]
             words_info.append({"word": word, "pos": (start_x + prefix_w, cur_y)})
@@ -277,10 +269,11 @@ def compute_word_layout(lines, start_y, heights, line_spacing, font, draw, canva
 
 
 def calculate_word_times(words, start_t, end_t):
+    """Allocates precise appearance timestamps across words based on character length and punctuation pauses."""
     if not words:
         return []
-    weights = [3.5 if item["word"].endswith(("।", "॥", ".")) else 1.0 for item in words]
-    total_w = sum(weights)
+    weights = [len(item["word"]) + (5.0 if item["word"].endswith(("।", "॥", ".")) else 0.0) for item in words]
+    total_w = sum(weights) or 1.0
     total_d = max(0.1, end_t - start_t)
     timed, cur_t = [], start_t
     for idx, item in enumerate(words):
@@ -290,14 +283,21 @@ def calculate_word_times(words, start_t, end_t):
 
 
 def render_karaoke_words(draw_ctx, timed_words, current_t, font, normal_color):
-    """Renders whole words with a golden shine transition without breaking matras."""
+    """
+    Word-by-word reveal:
+    - Words not yet spoken remain hidden.
+    - Active word flashes with radiant gold shine + aura.
+    - Spoken words settle into solid readable white.
+    """
     for item in timed_words:
         if current_t >= item["appear_t"]:
             time_alive = current_t - item["appear_t"]
             x, y = item["pos"]
             if time_alive < SHINE_DURATION:
-                for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                # 8-direction golden glow aura
+                for dx, dy in ((-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, 1), (-1, 1), (1, -1)):
                     draw_ctx.text((x + dx, y + dy), item["word"], font=font, fill=GOLD_GLOW_BACK)
+                # Intense golden-white core
                 draw_ctx.text((x, y), item["word"], font=font, fill=GOLD_SHINE)
             else:
                 draw_ctx.text((x, y), item["word"], font=font, fill=normal_color)
@@ -464,14 +464,14 @@ def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_au
 
     sanskrit_voice_start = 3.5
     sanskrit_voice_end = sanskrit_voice_start + max(4.0, sans_dur)
-    narration_voice_start = sanskrit_voice_end + 1.6
+    narration_voice_start = sanskrit_voice_end + 1.8
 
-    len_mean = max(1, len(meaning_words_layout))
-    len_mom = len(moment_words_layout)
+    len_mean = max(1, sum(len(x["word"]) for x in meaning_words_layout))
+    len_mom = sum(len(x["word"]) for x in moment_words_layout)
     tot_c = len_mean + len_mom
     actual_eng = max(6.0, eng_dur)
     meaning_voice_end = narration_voice_start + (actual_eng * (len_mean / float(tot_c))) if len_mom > 0 else (narration_voice_start + actual_eng)
-    moment_voice_start = meaning_voice_end + 1.6
+    moment_voice_start = meaning_voice_end + 1.2
     moment_voice_end = moment_voice_start + (actual_eng * (len_mom / float(tot_c))) if len_mom > 0 else moment_voice_start
 
     border_img = draw_programmatic_gold_frame(w, h)
@@ -529,7 +529,7 @@ def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_au
 
 
 # =====================================================================
-# 3. FAST ENCODING & RENDERING ENGINE
+# 3. HIGH-PERFORMANCE VIDEO ENCODER & 3D PARALLAX LOOP
 # =====================================================================
 
 def ffmpeg():
@@ -633,7 +633,8 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
     grid_y, grid_x = np.indices((h, w), dtype=np.float32)
     cx, cy = w / 2.0, h / 2.0
 
-    overscan = 1.12
+    # 1.22 overscan provides ample margin for strong 68px 3D parallax without border clipping
+    overscan = 1.22
     ow, oh = int(w * overscan), int(h * overscan)
     ox_offset = (ow - w) // 2
     oy_offset = (oh - h) // 2
@@ -669,10 +670,12 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
 
             img_overscanned = cv2.resize(img_cropped, (ow, oh), interpolation=cv2.INTER_CUBIC)
 
+            # Check and regenerate depth map if missing or corrupted/flat (std < 8.0)
             if not depth_path.exists():
                 generate_and_save_depth_map(img_path, depth_path)
             depth_raw = cv2.imread(str(depth_path), cv2.IMREAD_GRAYSCALE)
-            if depth_raw is None:
+            if depth_raw is None or depth_raw.std() < 8.0:
+                print(f"  [DEPTH] Flat/invalid cached depth map detected for {img_path.name}. Computing dynamic 3D depth...")
                 depth_raw = generate_and_save_depth_map(img_path, depth_path)
 
             depth_cropped = depth_raw[depth_slice]
@@ -690,29 +693,31 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
                 t = f_i / float(current_frames)
                 ease = 0.5 * (1.0 - math.cos(math.pi * t))
 
-                max_disp = 28.0 * energy
+                # High-amplitude displacement (68.0px) for deep, visible 3D stereoscopic depth
+                max_disp = 68.0 * energy
                 if motion_style == "pan_left":
                     cam_dx = -math.sin(math.pi * ease) * max_disp
-                    cam_dy = math.cos(math.pi * ease) * (max_disp * 0.2)
-                    zoom_factor = 1.0 + (0.035 * ease * energy)
+                    cam_dy = math.cos(math.pi * ease) * (max_disp * 0.25)
+                    zoom_factor = 1.0 + (0.07 * ease * energy)
                 elif motion_style == "pan_right":
                     cam_dx = math.sin(math.pi * ease) * max_disp
-                    cam_dy = -math.cos(math.pi * ease) * (max_disp * 0.2)
-                    zoom_factor = 1.0 + (0.035 * ease * energy)
+                    cam_dy = -math.cos(math.pi * ease) * (max_disp * 0.25)
+                    zoom_factor = 1.0 + (0.07 * ease * energy)
                 elif motion_style == "tilt_float":
-                    cam_dx = math.cos(math.pi * ease) * (max_disp * 0.25)
-                    cam_dy = math.sin(math.pi * ease) * (max_disp * 0.6)
-                    zoom_factor = 1.0 + (0.04 * ease * energy)
-                else:
+                    cam_dx = math.cos(math.pi * ease) * (max_disp * 0.35)
+                    cam_dy = math.sin(math.pi * ease) * (max_disp * 0.70)
+                    zoom_factor = 1.0 + (0.08 * ease * energy)
+                else:  # dolly_in
                     cam_dx = 0.0
-                    cam_dy = math.sin(math.pi * ease) * (max_disp * 0.15)
-                    zoom_factor = 1.0 + (0.06 * ease * energy)
+                    cam_dy = math.sin(math.pi * ease) * (max_disp * 0.25)
+                    zoom_factor = 1.0 + (0.10 * ease * energy)
 
                 sample_depth = depth_norm[oy_offset:oy_offset + h, ox_offset:ox_offset + w]
-                depth_weight = 0.20 + (0.80 * sample_depth)
+                # Power curve separates foreground objects from background layers
+                depth_weight = np.power(sample_depth, 1.4)
 
-                map_x = (grid_x - cx) / zoom_factor + cx + ox_offset + (cam_dx * (depth_weight - 0.5))
-                map_y = (grid_y - cy) / zoom_factor + cy + oy_offset + (cam_dy * (depth_weight - 0.5))
+                map_x = (grid_x - cx) / zoom_factor + cx + ox_offset + (cam_dx * (depth_weight - 0.45))
+                map_y = (grid_y - cy) / zoom_factor + cy + oy_offset + (cam_dy * (depth_weight - 0.45))
 
                 warped_bg = cv2.remap(
                     img_overscanned,
@@ -762,6 +767,8 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
 
                     text_overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
                     d_txt = ImageDraw.Draw(text_overlay)
+                    
+                    # Word-by-word reveal synchronized with Madhur Neural voice
                     render_karaoke_words(d_txt, ui["timed_sanskrit_words"], current_time_sec, ui["f_sanskrit"], ui["CREAM_WHITE"])
                     render_karaoke_words(d_txt, ui["timed_meaning_words"], current_time_sec, ui["f_meaning"], ui["BODY_WHITE"])
                     render_karaoke_words(d_txt, ui["timed_moment_words"], current_time_sec, ui["f_moment"], ui["BODY_WHITE"])
@@ -811,7 +818,7 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
 
 
 # =====================================================================
-# 4. HEADLESS STUDIO MASTER MUXER
+# 4. STUDIO MASTER MUXER (HEADLESS / NON-BLOCKING)
 # =====================================================================
 
 def mux(video, audio, out, chapter=1, verse=1):
