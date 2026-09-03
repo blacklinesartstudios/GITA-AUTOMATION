@@ -347,9 +347,8 @@ def render_karaoke_chars(draw_ctx, timed_chars, current_t, font, normal_color):
         if current_t >= item["appear_t"]:
             time_alive = current_t - item["appear_t"]
             x, y = item["pos"]
+            # Clean single-layer character rendering with a subtle flash instead of 4-way overlapping glow
             if time_alive < SHINE_DURATION:
-                for dx, dy in ((-1,0), (1,0), (0,-1), (0,1)):
-                    draw_ctx.text((x + dx, y + dy), item["char"], font=font, fill=GOLD_GLOW_BACK)
                 draw_ctx.text((x, y), item["char"], font=font, fill=GOLD_SHINE)
             else:
                 draw_ctx.text((x, y), item["char"], font=font, fill=normal_color)
