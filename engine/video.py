@@ -457,7 +457,6 @@ def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_au
     # =========================================================================
     # DYNAMIC TIME-MAPPING SCALED TO EXACT TOTAL AUDIO DURATION
     # =========================================================================
-    # Distribute available timeline proportionally based on actual audio length
     avail_time = max(10.0, total_audio_duration - 4.0)
     
     sanskrit_voice_start = 2.0
