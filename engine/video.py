@@ -266,7 +266,7 @@ def compute_char_layout(lines, start_y, heights, line_spacing, font, draw, canva
         start_x = (canvas_width - line_w) // 2
         running_text = ""
         
-        # Letter-by-letter flow loop
+        # Strictly character-by-character iteration for smooth letter flow
         for ch in line:
             prefix_bbox = draw.textbbox((0, 0), running_text, font=font) if running_text else (0, 0, 0, 0)
             prefix_w = prefix_bbox[2] - prefix_bbox[0]
@@ -332,7 +332,8 @@ def draw_3d_header(canvas_img, y_title, y_sub, title_text, sub_text, f_title, f_
 def calculate_char_times(chars, start_t, end_t):
     if not chars:
         return []
-    weights = [5.0 if item["char"] in ("।", "॥", ".", "\n") else (1.8 if item["char"] == " " else 1.0) for item in chars]
+    # Balanced weights so letters flow smoothly without stalling on spaces
+    weights = [2.5 if item["char"] in ("।", "॥", ".", "\n") else (1.2 if item["char"] == " " else 1.0) for item in chars]
     total_w = sum(weights)
     total_d = max(0.1, end_t - start_t)
     timed, cur_t = [], start_t
