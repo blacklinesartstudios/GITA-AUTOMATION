@@ -135,9 +135,6 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
     privacy_status = kwargs.get("privacy_status", "public")
     playlist_name = kwargs.get("playlist_name", "Bhagavad Gita • English Edition")
 
-    # ==========================================
-    # PASTE THE DESCRIPTION TEMPLATE BLOCK HERE:
-    # ==========================================
     if len(args) >= 1:
         first = args[0]
         if isinstance(first, (str, Path)):
@@ -167,11 +164,16 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
                     )
                 except Exception:
                     pass
+
                 if len(args) >= 2 and isinstance(args[1], (str, Path)):
                     project_root = Path(args[1])
             elif p.suffix.lower() in [".mp4", ".mov", ".mkv"]:
                 video_path = p
         elif isinstance(first, dict):
+            ch = first.get("chapter", 1)
+            vs = first.get("verse", 1)
+            title = f"Bhagavad Gita | Ch {ch} Verse {vs} #Shorts"
+            description = f"Chapter {ch}, Verse {vs}\n\n{first.get('meaning', '')}\n\n#BhagavadGita #Krishna #Shorts"
             # ... rest of function continues below ...
 
     if len(args) >= 2:
