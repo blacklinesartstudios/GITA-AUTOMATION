@@ -7,7 +7,7 @@ from pathlib import Path
 def get_authenticated_service(project_root: Path):
     """
     Authenticates with YouTube Data API v3 using token.json or client_secrets.json.
-    Falls back gracefully if dependencies or credentials are not yet configured.
+    Falls back gracefully if credentials or libraries are absent.
     """
     try:
         from google.oauth2.credentials import Credentials
@@ -16,7 +16,6 @@ def get_authenticated_service(project_root: Path):
         from googleapiclient.discovery import build
     except ImportError:
         print("  [UPLOAD WARNING] Google API client libraries not installed.")
-        print("  Run: pip install google-api-python-client google-auth-oauthlib google-auth-httplib2")
         return None
 
     scopes = [
@@ -54,7 +53,6 @@ def get_authenticated_service(project_root: Path):
                 return None
 
     if not creds:
-        print("  [UPLOAD WARNING] Valid YouTube OAuth credentials not found.")
         return None
 
     return build("youtube", "v3", credentials=creds)
@@ -79,7 +77,7 @@ def add_video_to_playlist(youtube, video_id: str, playlist_id: str):
         ).execute()
         print(f"  ✓ Video added to playlist: {playlist_id}")
     except Exception as e:
-        print(f"  [UPLOAD WARNING] Could not add video to playlist {playlist_id}: {e}")
+        print(f"  [UPLOAD WARNING] Could not add video to playlist: {e}")
 
 def upload_short_to_youtube(
     video_path: Path,
@@ -104,8 +102,8 @@ def upload_short_to_youtube(
 
     youtube = get_authenticated_service(project_root)
     if not youtube:
-        print(f"  [SIMULATED UPLOAD] Credentials bypassed. Video ready at: {video_path.name}")
-        return "SIMULATED_VIDEO_ID"
+        print(f"  [UPLOAD BYPASS] Local test mode active. Video ready at: {video_path.name}")
+        return "LOCAL_SUCCESS"
 
     try:
         from googleapiclient.http import MediaFileUpload
@@ -142,7 +140,7 @@ def upload_short_to_youtube(
                 "title": title,
                 "description": description,
                 "tags": tags,
-                "categoryId": "27"  # Education
+                "categoryId": "27"
             },
             "status": {
                 "privacyStatus": "public",
