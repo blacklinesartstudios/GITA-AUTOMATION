@@ -17,7 +17,6 @@ SCOPES = [
 
 
 def is_headless() -> bool:
-    """Detects if running inside headless CI without a GUI display."""
     if os.environ.get("CI") or os.environ.get("GITHUB_ACTIONS"):
         return True
     if sys.platform != "win32" and not os.environ.get("DISPLAY"):
@@ -30,7 +29,6 @@ def get_authenticated_service(project_root: Path = Path(".")):
     token_file = project_root / "token.json"
     client_secrets_file = project_root / "client_secrets.json"
 
-    # Hydrate credentials from GitHub Secrets if running in Actions
     env_token = os.environ.get("YOUTUBE_TOKEN_JSON")
     if env_token and env_token.strip():
         token_file.write_text(env_token.strip(), encoding="utf-8")
@@ -44,17 +42,15 @@ def get_authenticated_service(project_root: Path = Path(".")):
     if token_file.exists():
         try:
             token_data = json.loads(token_file.read_text(encoding="utf-8"))
-            # Omit explicit SCOPES parameter so it defaults to the token's original granted scopes
             creds = Credentials.from_authorized_user_info(token_data)
         except Exception as e:
             print(f"  [AUTH WARNING] Failed reading token.json: {e}")
             creds = None
 
     if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
+        if creds and creds.refresh_token:
             print("  [AUTH] Refreshing expired OAuth token via Google Cloud...")
             try:
-                # Clear explicit scopes so Google refreshes against originally granted scopes
                 creds._scopes = None
                 creds.refresh(Request())
                 token_file.write_text(creds.to_json(), encoding="utf-8")
@@ -72,10 +68,7 @@ def get_authenticated_service(project_root: Path = Path(".")):
             )
 
         if not client_secrets_file.exists():
-            raise FileNotFoundError(
-                f"Missing {client_secrets_file}. Download OAuth Client JSON from Google Cloud Console "
-                "and save it to the project root."
-            )
+            raise FileNotFoundError(f"Missing {client_secrets_file} in root directory.")
 
         print("  [AUTH] Opening browser for one-time local OAuth authorization...")
         flow = InstalledAppFlow.from_client_secrets_file(str(client_secrets_file), SCOPES)
@@ -107,7 +100,7 @@ def get_or_create_playlist(youtube, title: str) -> str:
         res = create_req.execute()
         return res["id"]
     except Exception as e:
-        print(f"  [PLAYLIST WARNING] Failed to query or create playlist: {e}")
+        print(f"  [PLAYLIST WARNING] Failed to query/create playlist: {e}")
         return ""
 
 
@@ -133,23 +126,15 @@ def add_video_to_playlist(youtube, video_id: str, playlist_id: str):
 
 
 def upload_short_to_youtube(*args, **kwargs) -> str:
-    """
-    Polymorphic upload interface. Handles:
-    - upload_short_to_youtube(video_path, title, description, ...)
-    - upload_short_to_youtube(render_cfg_path, project_root)
-    - upload_short_to_youtube(video_path, metadata_dict)
-    - upload_short_to_youtube(video_path=..., title=..., ...)
-    """
     project_root = Path(".")
     video_path = None
     title = kwargs.get("title")
     description = kwargs.get("description")
     tags = kwargs.get("tags")
-    category_id = kwargs.get("category_id", "27")  # Education
+    category_id = kwargs.get("category_id", "27")
     privacy_status = kwargs.get("privacy_status", "public")
     playlist_name = kwargs.get("playlist_name", "Bhagavad Gita • English Edition")
 
-    # Parse positional arguments
     if len(args) >= 1:
         first = args[0]
         if isinstance(first, (str, Path)):
@@ -190,7 +175,6 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
     if "video_path" in kwargs:
         video_path = Path(kwargs["video_path"])
 
-    # Locate rendered video if not passed explicitly
     if not video_path or not video_path.exists():
         candidates = [
             project_root / "output" / "final_master.mp4",
