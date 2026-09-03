@@ -5,6 +5,10 @@ on:
   schedule:
     - cron: '0 4 * * *' # Executes daily at 04:00 UTC (09:30 AM IST)
 
+# PERMISSIONS BLOCK ADDED HERE:
+permissions:
+  contents: write
+  
 concurrency:
   group: gita-pipeline-production
   cancel-in-progress: false
