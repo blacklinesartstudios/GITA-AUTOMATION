@@ -8,8 +8,8 @@ import asyncio
 import wave
 from pathlib import Path
 
+# Restored: Human Indian Neural Voice for both Chant & Philosophical Narration
 UNIFIED_VOICE = "hi-IN-MadhurNeural"
-NARRATION_VOICE = "en-US-ChristopherNeural"
 
 
 def ffmpeg_bin() -> str:
@@ -40,6 +40,7 @@ def get_audio_duration_sec(wav_path: Path) -> float:
 
 
 def process_voice_dsp(in_wav: Path, out_wav: Path, is_chant: bool = False):
+    """Studio Vocal DSP: Sacred temple reverb for chants, intimate presence for narration."""
     if is_chant:
         audio_filter = (
             "equalizer=f=110:width_type=o:w=1.2:g=5.5,"
@@ -108,13 +109,6 @@ async def generate_edge_tts(text: str, voice: str, out_wav: Path, rate: str = "-
 
 
 class UniversalAudioResult(tuple):
-    """
-    Polymorphic result structure:
-    1. Unpacks cleanly as a 3-tuple: (master_soundtrack_path, selected_music, attribution)
-    2. Provides path and duration attributes: res.path, res.duration, res.audio_path
-    3. Supports dictionary lookups: res['audio_path'], res['duration']
-    4. Casts directly to string / Path: str(res), Path(res)
-    """
     def __new__(cls, master_path: Path, music_path: Path, attribution: str, duration: float, sanskrit_dur: float, narr_dur: float):
         return super().__new__(cls, (Path(master_path), Path(music_path), str(attribution)))
 
@@ -154,9 +148,7 @@ class UniversalAudioResult(tuple):
 
 
 def mix_full_soundtrack(*args, **kwargs) -> UniversalAudioResult:
-    # Resolve project root
     project_root = Path(".")
-    render_cfg_path = None
     verse_dict = {}
 
     if len(args) >= 2 and isinstance(args[1], (str, Path)):
@@ -165,9 +157,8 @@ def mix_full_soundtrack(*args, **kwargs) -> UniversalAudioResult:
     if len(args) >= 1:
         first = args[0]
         if isinstance(first, (str, Path)) and Path(first).exists():
-            render_cfg_path = Path(first)
             try:
-                cfg_data = json.loads(render_cfg_path.read_text(encoding="utf-8"))
+                cfg_data = json.loads(Path(first).read_text(encoding="utf-8"))
                 verse_dict = cfg_data.get("verse", cfg_data)
             except Exception:
                 pass
@@ -182,17 +173,19 @@ def mix_full_soundtrack(*args, **kwargs) -> UniversalAudioResult:
     music_dir = assets / "music"
     music_dir.mkdir(parents=True, exist_ok=True)
 
-    sanskrit_txt = verse_dict.get("sanskrit", "").replace("\\n", " ").strip() or "धर्मक्षेत्रे कुरुक्षेत्रे समवेता युयुत्सवः"
+    sanskrit_txt = verse_dict.get("sanskrit", "").replace("\\n", " ").strip()
     meaning_txt = verse_dict.get("meaning", "").strip()
     insight_txt = verse_dict.get("insight", "").strip()
-    clean_narration = f"{meaning_txt} ... {insight_txt}".strip() or "The divine song of life and consciousness."
+    
+    # Crucial breath pause: triple ellipsis creates human breathing room
+    clean_narration = f"{meaning_txt} ... ... {insight_txt}".strip()
 
     sans_raw_wav = cache / "sanskrit_raw.wav"
     sans_proc_wav = cache / "sanskrit_processed.wav"
     narr_raw_wav = cache / "narration_raw.wav"
     narr_proc_wav = cache / "narration_processed.wav"
 
-    # Step 1: Synthesize
+    # Step 1: Synthesize sacred Sanskrit chant (Madhur Neural - slowed for meditative reverence)
     print("  [AUDIO] Synthesizing sacred Sanskrit chant (Madhur Neural)...")
     asyncio.run(generate_edge_tts(sanskrit_txt, UNIFIED_VOICE, sans_raw_wav, rate="-12%", pitch="-4Hz"))
     if sans_raw_wav.exists() and get_audio_duration_sec(sans_raw_wav) > 0.2:
@@ -200,21 +193,21 @@ def mix_full_soundtrack(*args, **kwargs) -> UniversalAudioResult:
     else:
         sans_proc_wav = sans_raw_wav
 
-    print("  [AUDIO] Synthesizing philosophical narration (Christopher Neural)...")
-    asyncio.run(generate_edge_tts(clean_narration, NARRATION_VOICE, narr_raw_wav, rate="-6%", pitch="-2Hz"))
+    # Step 2: Synthesize human English narration using Madhur Neural
+    print("  [AUDIO] Synthesizing human philosophical narration (Madhur Neural)...")
+    asyncio.run(generate_edge_tts(clean_narration, UNIFIED_VOICE, narr_raw_wav, rate="-6%", pitch="-2Hz"))
     if narr_raw_wav.exists() and get_audio_duration_sec(narr_raw_wav) > 0.2:
         process_voice_dsp(narr_raw_wav, narr_proc_wav, is_chant=False)
     else:
         narr_proc_wav = narr_raw_wav
 
-    # Step 2: Pick Background Music
+    # Step 3: Background music selection
     valid_exts = {".mp3", ".wav", ".aac", ".flac", ".ogg"}
     music_tracks = [p for p in music_dir.iterdir() if p.suffix.lower() in valid_exts]
     selected_music = random.choice(music_tracks) if music_tracks else (cache / "fallback_bgm.wav")
     attribution_str = "Music composition arranged via FlowMusic AI."
 
     if not selected_music.exists():
-        # Generate clean silent fallback if no music files exist
         subprocess.run([
             ffmpeg_bin(), "-y", "-nostdin",
             "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
@@ -222,7 +215,7 @@ def mix_full_soundtrack(*args, **kwargs) -> UniversalAudioResult:
             str(selected_music)
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, check=True)
 
-    # Step 3: Compute Durations & Timing
+    # Step 4: Timing & Mix Master
     sans_dur = get_audio_duration_sec(sans_proc_wav)
     narr_dur = get_audio_duration_sec(narr_proc_wav)
 
@@ -243,7 +236,6 @@ def mix_full_soundtrack(*args, **kwargs) -> UniversalAudioResult:
     studio_str = "BLACKLINES ART STUDIO"
     copyright_str = "© 2026 BLACKLINES ART STUDIO. All rights reserved."
 
-    # Loop buffer safe sample limit: 5 minutes of 44.1kHz audio = 13,230,000 samples
     loop_samples = 44100 * 300
     filter_complex = (
         f"[0:a]adelay={sans_delay_ms}|{sans_delay_ms},apad=whole_dur={total_timeline_sec}[sans];"
