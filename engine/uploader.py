@@ -7,7 +7,7 @@ from pathlib import Path
 def get_authenticated_service(project_root: Path):
     """
     Authenticates with YouTube Data API v3 using token.json or client_secrets.json.
-    Falls back gracefully if credentials or libraries are absent.
+    Guards against headless browser hangs on GitHub Actions.
     """
     try:
         from google.oauth2.credentials import Credentials
@@ -15,7 +15,8 @@ def get_authenticated_service(project_root: Path):
         from google.auth.transport.requests import Request
         from googleapiclient.discovery import build
     except ImportError:
-        print("  [UPLOAD WARNING] Google API client libraries not installed.")
+        print("  [UPLOAD ERROR] Google API client libraries not installed.")
+        print("  Run: pip install google-api-python-client google-auth-oauthlib google-auth-httplib2")
         return None
 
     scopes = [
@@ -34,25 +35,36 @@ def get_authenticated_service(project_root: Path):
         except Exception as e:
             print(f"  [UPLOAD WARNING] Error reading token.json: {e}")
 
+    is_ci = os.environ.get("GITHUB_ACTIONS") == "true" or os.environ.get("CI") == "true"
+
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             try:
+                print("  [UPLOAD] Refreshing expired OAuth access token...")
                 creds.refresh(Request())
                 token_path.write_text(creds.to_json(), encoding="utf-8")
+                print("  ✓ Access token refreshed successfully.")
             except Exception as e:
-                print(f"  [UPLOAD WARNING] Could not refresh token: {e}")
+                print(f"  [UPLOAD ERROR] Could not refresh token: {e}")
                 creds = None
 
         if not creds and client_secrets_path.exists():
+            if is_ci:
+                print("  [UPLOAD ERROR] Running in headless CI (GitHub Actions). Interactive browser login unavailable.")
+                print("  Please ensure YOUTUBE_TOKEN_JSON secret contains a valid refresh_token.")
+                return None
             try:
+                print("  [UPLOAD] Starting local browser OAuth login...")
                 flow = InstalledAppFlow.from_client_secrets_file(str(client_secrets_path), scopes)
                 creds = flow.run_local_server(port=0)
                 token_path.write_text(creds.to_json(), encoding="utf-8")
+                print("  ✓ New token.json generated and saved.")
             except Exception as e:
-                print(f"  [UPLOAD WARNING] OAuth flow failed: {e}")
+                print(f"  [UPLOAD ERROR] OAuth flow failed: {e}")
                 return None
 
     if not creds:
+        print("  [UPLOAD ERROR] No valid YouTube credentials found on system.")
         return None
 
     return build("youtube", "v3", credentials=creds)
@@ -77,7 +89,7 @@ def add_video_to_playlist(youtube, video_id: str, playlist_id: str):
         ).execute()
         print(f"  ✓ Video added to playlist: {playlist_id}")
     except Exception as e:
-        print(f"  [UPLOAD WARNING] Could not add video to playlist: {e}")
+        print(f"  [UPLOAD WARNING] Could not add video to playlist {playlist_id}: {e}")
 
 def upload_short_to_youtube(
     video_path: Path,
@@ -102,8 +114,8 @@ def upload_short_to_youtube(
 
     youtube = get_authenticated_service(project_root)
     if not youtube:
-        print(f"  [UPLOAD BYPASS] Local test mode active. Video ready at: {video_path.name}")
-        return "LOCAL_SUCCESS"
+        print(f"  [UPLOAD FAILED] Authentication failed. Video remains saved locally at: {video_path.name}")
+        return None
 
     try:
         from googleapiclient.http import MediaFileUpload
@@ -140,7 +152,7 @@ def upload_short_to_youtube(
                 "title": title,
                 "description": description,
                 "tags": tags,
-                "categoryId": "27"
+                "categoryId": "27"  # Education
             },
             "status": {
                 "privacyStatus": "public",
