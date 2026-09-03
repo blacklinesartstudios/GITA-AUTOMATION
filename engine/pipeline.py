@@ -2,7 +2,7 @@ import os
 import json
 import subprocess
 from pathlib import Path
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont  # <--- Make sure ImageFont is imported here
 
 from engine.depth_renderer import UltraDepthRenderer
 from engine.uploader import upload_short_to_youtube
