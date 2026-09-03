@@ -16,3 +16,9 @@ edge-tts
 python-dotenv
 tqdm
 timm
+onnxruntime
+huggingface_hub
+edge-tts
+opencv-python-headless
+numpy
+pillow
