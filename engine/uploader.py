@@ -146,17 +146,26 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
                     
                     title = f"Bhagavad Gita | Chapter {ch} Verse {vs} #Shorts"
                     
+                    # --- REPLACE OR UPDATE DESCRIPTION WITH THIS TEMPLATE ---
                     description = (
-                        f"॥ श्रीमद्भगवद्गीता ॥ Chapter {ch}, Verse {vs}\n\n"
+                        f"॥ श्रीमद्भगवद्गीता ॥\n"
+                        f"Chapter {ch}, Verse {vs}\n\n"
+                        f"📜 SANSKRIT VERSE:\n"
                         f"{sanskrit_text}\n\n"
-                        f"Meaning:\n{meaning_text}\n\n"
-                        f"The Moment:\n{insight_text}\n\n"
+                        f"📖 MEANING:\n"
+                        f"{meaning_text}\n\n"
+                        f"💡 THE MOMENT (PRACTICAL INSIGHT):\n"
+                        f"{insight_text}\n\n"
                         f"--------------------------------------------------\n"
-                        f"Produced, designed, and mastered by Venkatesh Marturu\n"
-                        f"BLACKLINES ART STUDIO © 2026. All rights reserved.\n"
+                        f"Studio Master: @BhagavadGita-slokha\n"
+                        f"Creator & Sound Design: Venkatesh Marturu\n"
+                        f"Copyright: © 2026 @BhagavadGita-slokha. All rights reserved.\n"
+                        f"Audio License: Music composition arranged via FlowMusic AI.\n"
                         f"--------------------------------------------------\n\n"
-                        f"#BhagavadGita #Krishna #SpiritualWisdom #Shorts #DailyWisdom #Meditation #SanatanaDharma"
+                        f"#BhagavadGita #Krishna #Shorts #DailyWisdom #Spirituality #Hinduism #Geeta #mindfulnessforsleep"
                     )
+                    # ---------------------------------------------------------
+
                 except Exception as e:
                     print(f"  [DESC ERROR] Failed parsing JSON for description: {e}")
 
