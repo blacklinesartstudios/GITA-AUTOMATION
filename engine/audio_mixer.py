@@ -8,7 +8,7 @@ import asyncio
 import wave
 from pathlib import Path
 
-# Restored: Human Indian Neural Voice for both Chant & Philosophical Narration
+# Human Neural Voice for both Sanskrit Chanting and English Philosophical Narration
 UNIFIED_VOICE = "hi-IN-MadhurNeural"
 
 
@@ -40,7 +40,7 @@ def get_audio_duration_sec(wav_path: Path) -> float:
 
 
 def process_voice_dsp(in_wav: Path, out_wav: Path, is_chant: bool = False):
-    """Studio Vocal DSP: Sacred temple reverb for chants, intimate presence for narration."""
+    """Applies analog-style studio EQ, spatial echo, and dynamic vocal compression."""
     if is_chant:
         audio_filter = (
             "equalizer=f=110:width_type=o:w=1.2:g=5.5,"
@@ -176,8 +176,6 @@ def mix_full_soundtrack(*args, **kwargs) -> UniversalAudioResult:
     sanskrit_txt = verse_dict.get("sanskrit", "").replace("\\n", " ").strip()
     meaning_txt = verse_dict.get("meaning", "").strip()
     insight_txt = verse_dict.get("insight", "").strip()
-    
-    # Crucial breath pause: triple ellipsis creates human breathing room
     clean_narration = f"{meaning_txt} ... ... {insight_txt}".strip()
 
     sans_raw_wav = cache / "sanskrit_raw.wav"
@@ -185,7 +183,6 @@ def mix_full_soundtrack(*args, **kwargs) -> UniversalAudioResult:
     narr_raw_wav = cache / "narration_raw.wav"
     narr_proc_wav = cache / "narration_processed.wav"
 
-    # Step 1: Synthesize sacred Sanskrit chant (Madhur Neural - slowed for meditative reverence)
     print("  [AUDIO] Synthesizing sacred Sanskrit chant (Madhur Neural)...")
     asyncio.run(generate_edge_tts(sanskrit_txt, UNIFIED_VOICE, sans_raw_wav, rate="-12%", pitch="-4Hz"))
     if sans_raw_wav.exists() and get_audio_duration_sec(sans_raw_wav) > 0.2:
@@ -193,7 +190,6 @@ def mix_full_soundtrack(*args, **kwargs) -> UniversalAudioResult:
     else:
         sans_proc_wav = sans_raw_wav
 
-    # Step 2: Synthesize human English narration using Madhur Neural
     print("  [AUDIO] Synthesizing human philosophical narration (Madhur Neural)...")
     asyncio.run(generate_edge_tts(clean_narration, UNIFIED_VOICE, narr_raw_wav, rate="-6%", pitch="-2Hz"))
     if narr_raw_wav.exists() and get_audio_duration_sec(narr_raw_wav) > 0.2:
@@ -201,7 +197,6 @@ def mix_full_soundtrack(*args, **kwargs) -> UniversalAudioResult:
     else:
         narr_proc_wav = narr_raw_wav
 
-    # Step 3: Background music selection
     valid_exts = {".mp3", ".wav", ".aac", ".flac", ".ogg"}
     music_tracks = [p for p in music_dir.iterdir() if p.suffix.lower() in valid_exts]
     selected_music = random.choice(music_tracks) if music_tracks else (cache / "fallback_bgm.wav")
@@ -215,7 +210,6 @@ def mix_full_soundtrack(*args, **kwargs) -> UniversalAudioResult:
             str(selected_music)
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, check=True)
 
-    # Step 4: Timing & Mix Master
     sans_dur = get_audio_duration_sec(sans_proc_wav)
     narr_dur = get_audio_duration_sec(narr_proc_wav)
 
