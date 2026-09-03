@@ -1,132 +1,80 @@
 name: Bhagavad Gita YouTube Automation
 
 on:
-  schedule:
-    # 6:00 AM IST (00:30 UTC)
-    - cron: '30 0 * * *'
-    # 1:00 PM IST (07:30 UTC)
-    - cron: '30 7 * * *'
-    # 7:00 PM IST (13:30 UTC)
-    - cron: '30 13 * * *'
   workflow_dispatch:
+  schedule:
+    - cron: '0 4 * * *' # Executes daily at 04:00 UTC (09:30 AM IST)
 
 concurrency:
-  group: gita-automation-pipeline
+  group: gita-pipeline-production
   cancel-in-progress: false
-
-permissions:
-  contents: write
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Free Disk Space
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          persist-credentials: true
+          fetch-depth: 0
 
-      - name: Set up Python 3.11
+      - name: Install System FFmpeg & Devanagari Fonts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-deva fonts-noto-core libraqm0
+
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          cache: 'pip'
 
-      - name: Install FFmpeg
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg
+      - name: Cache PyTorch / MiDaS Models
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/torch/hub
+            ~/.cache/torch/hub/checkpoints
+          key: ${{ runner.os }}-torch-models-v2
+          restore-keys: |
+            ${{ runner.os }}-torch-models-
+
+      - name: Cache Persistent Depth Maps
+        uses: actions/cache@v4
+        with:
+          path: depth
+          key: ${{ runner.os }}-depth-maps-${{ hashFiles('assets/images/**') }}
+          restore-keys: |
+            ${{ runner.os }}-depth-maps-
 
       - name: Install Python Dependencies
         run: |
-          pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
-          pip install --no-cache-dir google-api-python-client google-auth-oauthlib google-auth-httplib2 onnxruntime huggingface_hub
-          if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Pre-trust PyTorch Hub Repositories
-        run: |
-          mkdir -p /home/runner/.cache/torch/hub
-          cat << 'EOF' > /home/runner/.cache/torch/hub/trusted_list
-          intel-isl/MiDaS
-          rwightman/gen-efficientnet-pytorch
-          rwightman_gen-efficientnet-pytorch
-          EOF
-
-      - name: Restore YouTube Secrets and Tokens
+      - name: Run Master Script
         env:
           CLIENT_SECRETS_JSON: ${{ secrets.CLIENT_SECRETS_JSON }}
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
-          YOUTUBE_TOKEN_PICKLE: ${{ secrets.YOUTUBE_TOKEN_PICKLE }}
-        run: |
-          python - << 'EOF'
-          import os, base64
-
-          cs_data = os.environ.get('CLIENT_SECRETS_JSON', '').strip()
-          json_data = os.environ.get('YOUTUBE_TOKEN_JSON', '').strip()
-          pickle_data = os.environ.get('YOUTUBE_TOKEN_PICKLE', '').strip()
-
-          if cs_data:
-              with open('client_secrets.json', 'w', encoding='utf-8') as f:
-                  f.write(cs_data)
-              print("  ✓ Restored client_secrets.json")
-
-          if json_data:
-              with open('token.json', 'w', encoding='utf-8') as f:
-                  f.write(json_data)
-              print("  ✓ Restored token.json")
-
-          if pickle_data:
-              with open('token.pickle', 'wb') as f:
-                  f.write(base64.b64decode(pickle_data))
-              print("  ✓ Restored token.pickle")
-          EOF
-
-      - name: Verify YouTube Credentials Status
-        run: |
-          if [ -f "token.json" ] || [ -f "token.pickle" ]; then
-            echo "  ✓ Valid YouTube token found on runner."
-          else
-            echo "::warning::No token.json or token.pickle found! YouTube upload will fail or fall back to local mode."
-          fi
-
-      - name: Create Required Directory Structure
-        run: |
-          mkdir -p output outputs cache temp depth assets/fonts assets/images assets/music data
-
-      - name: Run MASTER Script
-        env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          PYTHONUNBUFFERED: "1"
         run: |
           python MASTER.py
 
-      - name: Permanent Cloud Video Backup (GitHub Releases)
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish Master Video to GitHub Releases
+        if: success()
         run: |
           TAG_NAME="archive-$(date +'%Y%m%d-%H%M%S')"
-          if compgen -G "output/*.mp4" > /dev/null; then
-            gh release create "$TAG_NAME" output/*.mp4 --title "Gita Video Backup ($TAG_NAME)" --notes "Automated studio master backup." || echo "Backup release skipped"
-          else
-            echo "No output video files found to archive."
-          fi
+          gh release create "$TAG_NAME" output/*.mp4 \
+            --title "Daily Master Video $TAG_NAME" \
+            --notes "Automated 3D Parallax Master Production by Blacklines Art Studio."
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Auto-Save New Depth Maps & Progress to GitHub
+      - name: Commit Verse Progression Tracker
+        if: success()
         run: |
           git config --global user.name "Gita-Bot"
-          git config --global user.email "bot@github.com"
-          git add depth/ tracker.json narration.txt 2>/dev/null || true
-          if ! git diff --staged --quiet; then
-            git commit -m "Auto-save new depth maps and verse tracker [skip ci]"
-            git pull --rebase origin main || true
-            git push origin main
-          else
-            echo "No tracker or depth changes to commit."
-          fi
+          git config --global user.email "bot@blacklinesart.com"
+          git add tracker.json depth/ || true
+          git commit -m "Auto-save tracker and new depth maps [skip ci]" || echo "No state changes to commit"
+          git push origin main || true
