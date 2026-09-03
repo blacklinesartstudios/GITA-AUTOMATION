@@ -12,8 +12,7 @@ from googleapiclient.errors import HttpError
 
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
-    "https://www.googleapis.com/auth/youtube",
-    "https://www.googleapis.com/auth/youtube.force-ssl"
+    "https://www.googleapis.com/auth/youtube"
 ]
 
 
@@ -31,7 +30,7 @@ def get_authenticated_service(project_root: Path = Path(".")):
     token_file = project_root / "token.json"
     client_secrets_file = project_root / "client_secrets.json"
 
-    # Hydrate credentials from environment variables if present (CI runners)
+    # Hydrate credentials from GitHub Secrets if running in Actions
     env_token = os.environ.get("YOUTUBE_TOKEN_JSON")
     if env_token and env_token.strip():
         token_file.write_text(env_token.strip(), encoding="utf-8")
@@ -45,7 +44,8 @@ def get_authenticated_service(project_root: Path = Path(".")):
     if token_file.exists():
         try:
             token_data = json.loads(token_file.read_text(encoding="utf-8"))
-            creds = Credentials.from_authorized_user_info(token_data, SCOPES)
+            # Omit explicit SCOPES parameter so it defaults to the token's original granted scopes
+            creds = Credentials.from_authorized_user_info(token_data)
         except Exception as e:
             print(f"  [AUTH WARNING] Failed reading token.json: {e}")
             creds = None
@@ -54,6 +54,8 @@ def get_authenticated_service(project_root: Path = Path(".")):
         if creds and creds.expired and creds.refresh_token:
             print("  [AUTH] Refreshing expired OAuth token via Google Cloud...")
             try:
+                # Clear explicit scopes so Google refreshes against originally granted scopes
+                creds._scopes = None
                 creds.refresh(Request())
                 token_file.write_text(creds.to_json(), encoding="utf-8")
                 print("  ✓ OAuth token refreshed successfully.")
@@ -147,13 +149,12 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
     privacy_status = kwargs.get("privacy_status", "public")
     playlist_name = kwargs.get("playlist_name", "Bhagavad Gita • English Edition")
 
-    # Inspect positional arguments
+    # Parse positional arguments
     if len(args) >= 1:
         first = args[0]
         if isinstance(first, (str, Path)):
             p = Path(first)
             if p.suffix.lower() == ".json" and p.exists():
-                # Argument is config JSON path: (render_cfg_path, project_root)
                 try:
                     cfg_data = json.loads(p.read_text(encoding="utf-8"))
                     verse = cfg_data.get("verse", {})
@@ -168,7 +169,6 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
             elif p.suffix.lower() in [".mp4", ".mov", ".mkv"]:
                 video_path = p
         elif isinstance(first, dict):
-            # Argument is a verse dictionary
             ch = first.get("chapter", 1)
             vs = first.get("verse", 1)
             title = f"Bhagavad Gita | Ch {ch} Verse {vs} #Shorts"
@@ -190,7 +190,7 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
     if "video_path" in kwargs:
         video_path = Path(kwargs["video_path"])
 
-    # If video_path is still unresolved, locate the rendered output
+    # Locate rendered video if not passed explicitly
     if not video_path or not video_path.exists():
         candidates = [
             project_root / "output" / "final_master.mp4",
@@ -205,7 +205,6 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
                 found = True
                 break
         if not found:
-            # Search output directory for any valid mp4
             out_dir = project_root / "output"
             if out_dir.exists():
                 mp4s = sorted(out_dir.glob("*.mp4"), key=os.path.getmtime, reverse=True)
@@ -215,7 +214,6 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
         if not found:
             raise FileNotFoundError("Could not locate final rendered .mp4 file in output/ or cache/.")
 
-    # Defaults for metadata
     if not title:
         title = "Bhagavad Gita Divine Verse #Shorts"
     if not description:
@@ -276,6 +274,5 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
     return video_url
 
 
-# Global export aliases to catch any variant imports across modules
 upload_to_youtube = upload_short_to_youtube
 upload_video = upload_short_to_youtube
