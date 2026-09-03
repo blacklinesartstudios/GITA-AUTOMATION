@@ -1,83 +1,108 @@
-import sys
-import subprocess
 from pathlib import Path
+import urllib.request
 import cv2
 import numpy as np
 
-try:
-    import onnxruntime as ort
-    from huggingface_hub import hf_hub_download
-except ImportError:
-    print("  [SYSTEM] Installing required AI libraries...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "onnxruntime", "huggingface_hub"])
-    import onnxruntime as ort
-    from huggingface_hub import hf_hub_download
+_ONNX_SESSION = None
 
-# Global cache so the model loads only once per execution
-_MODEL_SESSION = None
-_INPUT_NAME = None
+MODEL_URL = "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model_fp16.onnx"
 
-def get_depth_session():
-    global _MODEL_SESSION, _INPUT_NAME
-    if _MODEL_SESSION is None:
-        model_file = hf_hub_download(
-            repo_id="yuvraj108c/Depth-Anything-2-Onnx", 
-            filename="depth_anything_v2_vits.onnx"
-        )
-        _MODEL_SESSION = ort.InferenceSession(model_file, providers=['CPUExecutionProvider'])
-        _INPUT_NAME = _MODEL_SESSION.get_inputs()[0].name
-    return _MODEL_SESSION, _INPUT_NAME
+def get_depth_session(project_root: Path):
+    global _ONNX_SESSION
+    if _ONNX_SESSION is not None:
+        return _ONNX_SESSION
 
-def make_depth(img_path: Path, depth_path: Path):
-    img_path = Path(img_path)
-    depth_path = Path(depth_path)
-    depth_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    print(f"  [3D] Synthesizing Studio-Grade Depth for {img_path.name}...")
     try:
-        session, input_name = get_depth_session()
-    except Exception as e:
-        print(f"  [ERROR] AI depth model load failed: {e}")
-        return
+        import onnxruntime as ort
+    except ImportError:
+        print("  [DEPTH] onnxruntime not found. Falling back to default depth processor.")
+        return None
 
-    img = cv2.imread(str(img_path))
-    if img is None:
-        print(f"  [ERROR] Could not read image at {img_path}")
-        return
-        
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    orig_h, orig_w = img_rgb.shape[:2]
+    model_dir = project_root / "cache" / "models"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_path = model_dir / "depth_anything_v2_small.onnx"
 
-    target_size = 518
-    img_resized = cv2.resize(img_rgb, (target_size, target_size), interpolation=cv2.INTER_CUBIC)
-    
-    img_norm = img_resized.astype(np.float32) / 255.0
-    mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-    std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-    img_norm = (img_norm - mean) / std
-    img_norm = img_norm.transpose(2, 0, 1)
-    img_norm = np.expand_dims(img_norm, axis=0)
+    if not model_path.exists() or model_path.stat().st_size < 1000000:
+        print(f"  [DEPTH] Downloading Depth Anything v2 ONNX model to {model_path.name}...")
+        try:
+            urllib.request.urlretrieve(MODEL_URL, str(model_path))
+            print("  ✓ Depth model downloaded successfully.")
+        except Exception as e:
+            print(f"  [DEPTH] Failed downloading model: {e}")
+            return None
 
-    depth_map = session.run(None, {input_name: img_norm})[0]
-    depth_map = np.squeeze(depth_map)
-    
-    depth_map = cv2.resize(depth_map, (orig_w, orig_h), interpolation=cv2.INTER_CUBIC)
-    
-    depth_min, depth_max = depth_map.min(), depth_map.max()
-    if depth_max - depth_min > 0:
-        depth_norm = (depth_map - depth_min) / (depth_max - depth_min)
-    else:
-        depth_norm = depth_map
-        
-    # Contrast expansion: Gamma 1.4 + Percentile normalisation
-    gamma = 1.4  
-    depth_norm = np.power(depth_norm, gamma)
-    
-    p_low, p_high = np.percentile(depth_norm, (5, 95))
-    depth_norm = np.clip((depth_norm - p_low) / (p_high - p_low + 1e-5), 0, 1)
-        
-    depth_img = (depth_norm * 255.0).astype(np.uint8)
-    depth_clean = cv2.bilateralFilter(depth_img, d=7, sigmaColor=50, sigmaSpace=50)
+    providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    available = ort.get_available_providers()
+    selected_providers = [p for p in providers if p in available]
 
-    cv2.imwrite(str(depth_path), depth_clean)
-    print(f"  ✓ High-contrast depth map saved successfully to: {depth_path.name}")
+    _ONNX_SESSION = ort.InferenceSession(str(model_path), providers=selected_providers)
+    return _ONNX_SESSION
+
+def enhance_depth_contrast(raw_depth: np.ndarray) -> np.ndarray:
+    """
+    Stretches dynamic range across the full 0-255 spectrum:
+    Pure White (255) = Foreground Subject / Weapons (Maximum displacement)
+    Mid Grey (128)   = Battlefield Ground / Chariots
+    Pitch Black (0)  = Sky / Infinite Distance (Zero displacement)
+    """
+    # 1. Percentile stretch (clamps sensor noise & specular highlights)
+    p_low, p_high = np.percentile(raw_depth, (2, 98))
+    clipped = np.clip(raw_depth, p_low, p_high)
+    norm = (clipped - p_low) / max(1e-5, (p_high - p_low))
+
+    # 2. Gamma punch (1.45) to drop distant skies to true black
+    punched = np.power(norm, 1.45)
+    depth_u8 = (punched * 255.0).astype(np.uint8)
+
+    # 3. CLAHE (Local Adaptive Contrast) for fabric, chariot, and facial detail
+    clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8))
+    enhanced = clahe.apply(depth_u8)
+
+    # 4. Bilateral edge smoothing to prevent jagged displacement borders
+    return cv2.bilateralFilter(enhanced, 9, 75, 75)
+
+def make_depth(image_path: Path, output_depth_path: Path):
+    """
+    Generates a high-contrast 3D depth map for image_path and caches it at output_depth_path.
+    """
+    output_depth_path = Path(output_depth_path)
+    output_depth_path.parent.mkdir(parents=True, exist_ok=True)
+
+    img_bgr = cv2.imread(str(image_path))
+    if img_bgr is None:
+        raise FileNotFoundError(f"Source image not found: {image_path}")
+
+    h_orig, w_orig = img_bgr.shape[:2]
+    project_root = output_depth_path.resolve().parent.parent if output_depth_path.resolve().parent.name in ("depth", "depths") else output_depth_path.resolve().parent
+    session = get_depth_session(project_root)
+
+    if session is not None:
+        try:
+            # Model inference: 518x518 input resolution
+            input_size = 518
+            img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+            resized = cv2.resize(img_rgb, (input_size, input_size), interpolation=cv2.INTER_CUBIC)
+            
+            mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+            std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+            inp = ((resized / 255.0) - mean) / std
+            inp = inp.transpose(2, 0, 1)[np.newaxis, ...].astype(np.float32)
+
+            input_name = session.get_inputs()[0].name
+            depth_out = session.run(None, {input_name: inp})[0].squeeze()
+
+            depth_resized = cv2.resize(depth_out, (w_orig, h_orig), interpolation=cv2.INTER_CUBIC)
+            final_depth = enhance_depth_contrast(depth_resized)
+            cv2.imwrite(str(output_depth_path), final_depth)
+            return final_depth
+        except Exception as e:
+            print(f"  [DEPTH] ONNX inference error: {e}. Using OpenCV gradient fallback.")
+
+    # Fallback: High-contrast synthetic center-radial depth gradient
+    y, x = np.indices((h_orig, w_orig), dtype=np.float32)
+    cy, cx = h_orig * 0.45, w_orig * 0.5
+    dist = np.sqrt(((x - cx) / (w_orig * 0.5)) ** 2 + ((y - cy) / (h_orig * 0.5)) ** 2)
+    synth = np.clip(1.0 - (dist * 0.7), 0.0, 1.0)
+    final_depth = (np.power(synth, 1.5) * 255.0).astype(np.uint8)
+    cv2.imwrite(str(output_depth_path), final_depth)
+    return final_depth
