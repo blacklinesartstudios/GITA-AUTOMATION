@@ -1,5 +1,5 @@
 from pathlib import Path
-import subprocess, shutil, math, os, random, sys, time, urllib.request
+import subprocess, shutil, math, os, random, sys, time, urllib.request, re
 import cv2
 import numpy as np
 import json
@@ -35,7 +35,6 @@ def get_midas_model(model_type="MiDaS_small"):
 def generate_and_save_depth_map(img_input, target_depth_path: Path) -> np.ndarray:
     target_depth_path.parent.mkdir(parents=True, exist_ok=True)
 
-    # 1. Primary: High-contrast ONNX Depth Anything v2
     try:
         from engine.depth import make_depth
         if isinstance(img_input, (str, Path)) and Path(img_input).exists():
@@ -54,7 +53,6 @@ def generate_and_save_depth_map(img_input, target_depth_path: Path) -> np.ndarra
     except Exception as e:
         print(f"  [DEPTH] ONNX Depth-Anything fallback to MiDaS: {e}")
 
-    # 2. Secondary Fallback: PyTorch MiDaS
     img_bgr = img_input if isinstance(img_input, np.ndarray) else cv2.imread(str(img_input))
     if img_bgr is None:
         fallback_map = np.full((1920, 1080), 128, dtype=np.uint8)
@@ -94,7 +92,6 @@ def convert_to_devanagari_num(text_str: str) -> str:
     }
     return "".join(devanagari_map.get(ch, ch) for ch in str(text_str))
 
-# Exact Original Layout Specification
 FONT_SIZES = {
     "main_title": 76,
     "sub_title": 36,
@@ -255,31 +252,34 @@ def measure_lines_height(draw, lines, font, line_spacing):
     return total_h, heights
 
 def compute_char_layout(lines, start_y, heights, line_spacing, font, draw, canvas_width=1080):
-    words_info = []
+    chars_info = []
     cur_y = start_y
+    
+    # Audited Devanagari grapheme cluster pattern: binds consonants, halants, and matras together securely
+    grapheme_pattern = re.compile(r'([\u0900-\u097F]\u094d[\u0900-\u097F]|[\u0900-\u097F][\u093e-\u094c]?|.)')
+
     for i, line in enumerate(lines):
         if not line:
             cur_y += heights[i] + line_spacing
             continue
             
-        # Split line into words to maintain correct Devanagari matra shaping
-        words = line.split(" ")
         line_bbox = draw.textbbox((0, 0), line, font=font)
         line_w = line_bbox[2] - line_bbox[0]
         start_x = (canvas_width - line_w) // 2
         
-        current_x = start_x
-        for word in words:
-            word_str = word + " "
-            word_bbox = draw.textbbox((0, 0), word_str, font=font)
-            word_w = word_bbox[2] - word_bbox[0]
-            
-            # Treat each word as an atomic unit so font shaping stays pristine
-            words_info.append({"char": word_str, "pos": (current_x, cur_y)})
-            current_x += word_w
+        chunks = grapheme_pattern.findall(line)
+        chunks = [c for c in chunks if c]
+        
+        running_text = ""
+        for chunk in chunks:
+            prefix_bbox = draw.textbbox((0, 0), running_text, font=font) if running_text else (0, 0, 0, 0)
+            prefix_w = prefix_bbox[2] - prefix_bbox[0]
+            chars_info.append({"char": chunk, "pos": (start_x + prefix_w, cur_y)})
+            running_text += chunk
             
         cur_y += heights[i] + line_spacing
-    return words_info
+    return chars_info
+
 def draw_golden_lotus(draw, center_x, center_y, scale=1.0, gold_bright=(255, 230, 140, 255), gold_main=(212, 175, 86, 255), gold_dark=(140, 105, 45, 255)):
     cx, cy = center_x, center_y
     r_aura = int(24 * scale)
@@ -337,7 +337,6 @@ def draw_3d_header(canvas_img, y_title, y_sub, title_text, sub_text, f_title, f_
 def calculate_char_times(chars, start_t, end_t):
     if not chars:
         return []
-    # Balanced weights so letters flow smoothly without stalling on spaces
     weights = [2.5 if item["char"] in ("।", "॥", ".", "\n") else (1.2 if item["char"] == " " else 1.0) for item in chars]
     total_w = sum(weights)
     total_d = max(0.1, end_t - start_t)
@@ -352,7 +351,6 @@ def render_karaoke_chars(draw_ctx, timed_chars, current_t, font, normal_color):
         if current_t >= item["appear_t"]:
             time_alive = current_t - item["appear_t"]
             x, y = item["pos"]
-            # Clean single-layer character rendering with a subtle flash instead of 4-way overlapping glow
             if time_alive < SHINE_DURATION:
                 draw_ctx.text((x, y), item["char"], font=font, fill=GOLD_SHINE)
             else:
@@ -454,9 +452,6 @@ def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_au
     meaning_chars_layout = compute_char_layout(meaning_lines, mean_start_y, mean_heights, LAYOUT["meaning_line_spacing"], f_meaning, d_m, canvas_width=w)
     moment_chars_layout = compute_char_layout(moment_lines, box3_top + PAD_Y + mom_hd_h + 18, mom_heights, LAYOUT["moment_line_spacing"], f_moment, d_m, canvas_width=w) if moment_lines else []
 
-    # =========================================================================
-    # DYNAMIC TIME-MAPPING SCALED TO EXACT TOTAL AUDIO DURATION
-    # =========================================================================
     avail_time = max(10.0, total_audio_duration - 4.0)
     
     sanskrit_voice_start = 2.0
@@ -474,7 +469,6 @@ def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_au
     meaning_voice_end = narration_voice_start + mean_allotted
     moment_voice_start = meaning_voice_end + 0.8
     moment_voice_end = total_audio_duration - 1.5 if len_mom > 0 else moment_voice_start
-    # =========================================================================
 
     border_img = draw_programmatic_gold_frame(w, h)
     border_bgr, border_alpha = rgba_to_bgr_and_alpha(border_img)
@@ -601,29 +595,11 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
             img = cv2.imread(str(img_path))
             if img is None:
                 continue  
-            # ==========================================
-            # INSERT WATERMARK REMOVAL RIGHT HERE:
-            # ==========================================
+
             h_img, w_img = img.shape[:2]
             logo_box_y1, logo_box_y2 = int(h_img * 0.94), h_img
             logo_box_x1, logo_box_x2 = int(w_img * 0.82), w_img
             img[logo_box_y1:logo_box_y2, logo_box_x1:logo_box_x2] = (15, 15, 15)
-            # ==========================================
-
-            orig_h, orig_w = img.shape[:2]
-            aspect_target = w / float(h)
-            if (orig_w / float(orig_h)) > aspect_target:
-                new_w = int(orig_h * aspect_target)
-                offset = (orig_w - new_w) // 2
-                img_cropped = img[:, offset:offset+new_w]
-                depth_slice = (slice(None), slice(offset, offset+new_w))
-            else:
-                new_h = int(orig_w / aspect_target)
-                offset = (orig_h - new_h) // 2
-                img_cropped = img[offset:offset+new_h, :]
-                depth_slice = (slice(offset, offset+new_h), slice(None))
-
-            img_overscanned = cv2.resize(img_cropped, (ow, oh), interpolation=cv2.INTER_CUBIC)
 
             orig_h, orig_w = img.shape[:2]
             aspect_target = w / float(h)
