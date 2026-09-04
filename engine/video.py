@@ -255,7 +255,7 @@ def compute_char_layout(lines, start_y, heights, line_spacing, font, draw, canva
     chars_info = []
     cur_y = start_y
     
-    # Audited Devanagari grapheme cluster pattern: binds consonants, halants, and matras together securely
+    # Corrected Devanagari grapheme cluster pattern: binds base letters, halants, and matras together
     grapheme_pattern = re.compile(r'([\u0900-\u097F]\u094d[\u0900-\u097F]|[\u0900-\u097F][\u093e-\u094c]?|.)')
 
     for i, line in enumerate(lines):
