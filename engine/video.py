@@ -255,6 +255,7 @@ def compute_char_layout(lines, start_y, heights, line_spacing, font, draw, canva
     chars_info = []
     cur_y = start_y
     
+    # Decoupled layout rules: English preserves spaces cleanly; Devanagari groups atomic graphemes
     if is_english:
         token_pattern = re.compile(r'(\s+|.)')
     else:
@@ -456,39 +457,23 @@ def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_au
     
     moment_chars_layout = compute_char_layout(moment_lines, box3_top + PAD_Y + mom_hd_h + 18, mom_heights, LAYOUT["moment_line_spacing"], f_moment, d_m, canvas_width=w, is_english=True) if moment_lines else []
 
-    # --- EINSTEIN-LEVEL PROPORTIONAL AUDIO-VISUAL SYNCHRONIZATION ---
-    start_pad = 1.0  
-    end_pad = 1.2    
-    pause_gap = 0.8  
+    avail_time = max(8.0, total_audio_duration - 3.0)
     
-    active_duration = max(5.0, total_audio_duration - start_pad - end_pad)
+    sanskrit_voice_start = 1.0
+    sanskrit_voice_end = sanskrit_voice_start + max(2.5, avail_time * 0.22)
     
-    n_sans = max(1, len(sanskrit_chars_layout))
-    n_mean = max(1, len(meaning_chars_layout))
-    n_mom = len(moment_chars_layout) if moment_lines else 0
+    narration_voice_start = sanskrit_voice_end + 0.4
     
-    num_pauses = 2 if n_mom > 0 else 1
-    total_pause_time = num_pauses * pause_gap
+    len_mean = max(1, len(meaning_chars_layout))
+    len_mom = len(moment_chars_layout)
+    tot_c = len_mean + (len_mom if len_mom > 0 else 0)
     
-    net_speech_time = max(3.0, active_duration - total_pause_time)
-    total_chars = n_sans + n_mean + (n_mom if n_mom > 0 else 0)
+    remaining_time = max(3.0, total_audio_duration - narration_voice_start - 1.5)
+    mean_allotted = remaining_time * (len_mean / float(tot_c)) if tot_c > 0 else remaining_time
     
-    t_sans = net_speech_time * (n_sans / total_chars)
-    t_mean = net_speech_time * (n_mean / total_chars)
-    t_mom = net_speech_time * (n_mom / total_chars) if n_mom > 0 else 0.0
-    
-    sanskrit_voice_start = start_pad
-    sanskrit_voice_end = sanskrit_voice_start + t_sans
-    
-    narration_voice_start = sanskrit_voice_end + pause_gap
-    meaning_voice_end = narration_voice_start + t_mean
-    
-    if n_mom > 0:
-        moment_voice_start = meaning_voice_end + pause_gap
-        moment_voice_end = moment_voice_start + t_mom
-    else:
-        moment_voice_start = meaning_voice_end
-        moment_voice_end = meaning_voice_end
+    meaning_voice_end = narration_voice_start + mean_allotted
+    moment_voice_start = meaning_voice_end + 0.4
+    moment_voice_end = total_audio_duration - 1.0 if len_mom > 0 else moment_voice_start
 
     border_img = draw_programmatic_gold_frame(w, h)
     border_bgr, border_alpha = rgba_to_bgr_and_alpha(border_img)
