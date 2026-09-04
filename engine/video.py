@@ -251,12 +251,15 @@ def measure_lines_height(draw, lines, font, line_spacing):
     total_h = sum(heights) + line_spacing * max(0, len(lines) - 1)
     return total_h, heights
 
-def compute_char_layout(lines, start_y, heights, line_spacing, font, draw, canvas_width=1080):
+def compute_char_layout(lines, start_y, heights, line_spacing, font, draw, canvas_width=1080, is_english=False):
     chars_info = []
     cur_y = start_y
     
-    # Rechecked, bulletproof Devanagari cluster pattern handling complex conjunct stacks + matras
-    grapheme_pattern = re.compile(r'(?:[\u0900-\u097F]\u094d)*[\u0900-\u097F][\u093e-\u094c\u0932\u0941\u0942\u0943\u0947\u0948\u094b\u094c\u0902\u0903\u0901\u093c]*|.')
+    # Decoupled layout rules: English preserves spaces cleanly; Devanagari groups atomic graphemes
+    if is_english:
+        token_pattern = re.compile(r'(\s+|.)')
+    else:
+        token_pattern = re.compile(r'(?:[\u0900-\u097F]\u094d)*[\u0900-\u097F][\u093e-\u094c\u0932\u0941\u0942\u0943\u0947\u0948\u094b\u094c\u0902\u0903\u0901\u093c]*|\s|.')
 
     for i, line in enumerate(lines):
         if not line:
@@ -267,8 +270,8 @@ def compute_char_layout(lines, start_y, heights, line_spacing, font, draw, canva
         line_w = line_bbox[2] - line_bbox[0]
         start_x = (canvas_width - line_w) // 2
         
-        chunks = grapheme_pattern.findall(line)
-        chunks = [c for c in chunks if c and c.strip() != ""]
+        chunks = token_pattern.findall(line)
+        chunks = [c for c in chunks if c is not None]
         
         running_text = ""
         for chunk in chunks:
@@ -337,7 +340,6 @@ def draw_3d_header(canvas_img, y_title, y_sub, title_text, sub_text, f_title, f_
 def calculate_char_times(chars, start_t, end_t):
     if not chars:
         return []
-    # Snappy, fluid weights so audio and typing lock perfectly together without lagging
     weights = [1.2 if item["char"] in ("।", "॥", ".", "\n") else (1.0 if item["char"] == " " else 1.0) for item in chars]
     total_w = sum(weights)
     total_d = max(0.1, end_t - start_t)
@@ -448,12 +450,13 @@ def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_au
         box1_top += shift; box1_bot += shift; box2_top += shift; box2_bot += shift; box3_top += shift; box3_bot += shift
 
     sk_start_y = box1_top + PAD_Y + badge_top_h + 22
-    sanskrit_chars_layout = compute_char_layout(sanskrit_lines, sk_start_y, sk_heights, LAYOUT["sanskrit_line_spacing"], f_sanskrit, d_m, canvas_width=w)
+    sanskrit_chars_layout = compute_char_layout(sanskrit_lines, sk_start_y, sk_heights, LAYOUT["sanskrit_line_spacing"], f_sanskrit, d_m, canvas_width=w, is_english=False)
+    
     mean_start_y = box2_top + PAD_Y + m_hd_h + 18
-    meaning_chars_layout = compute_char_layout(meaning_lines, mean_start_y, mean_heights, LAYOUT["meaning_line_spacing"], f_meaning, d_m, canvas_width=w)
-    moment_chars_layout = compute_char_layout(moment_lines, box3_top + PAD_Y + mom_hd_h + 18, mom_heights, LAYOUT["moment_line_spacing"], f_moment, d_m, canvas_width=w) if moment_lines else []
+    meaning_chars_layout = compute_char_layout(meaning_lines, mean_start_y, mean_heights, LAYOUT["meaning_line_spacing"], f_meaning, d_m, canvas_width=w, is_english=True)
+    
+    moment_chars_layout = compute_char_layout(moment_lines, box3_top + PAD_Y + mom_hd_h + 18, mom_heights, LAYOUT["moment_line_spacing"], f_moment, d_m, canvas_width=w, is_english=True) if moment_lines else []
 
-    # Optimized Pacing: Tighter timing windows so text matches voice cadence precisely
     avail_time = max(8.0, total_audio_duration - 3.0)
     
     sanskrit_voice_start = 1.0
@@ -557,11 +560,6 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
     fps = 24 if fast_mode else 30
 
     best_encoder = detect_best_encoder() if not fast_mode else "libx264"
-    if fast_mode:
-        print(f"  [FAST RENDER] Fast Preview Mode (1080p @ 24fps ultrafast)...")
-    else:
-        print(f"  [RENDER] Production Mode using verified encoder: {best_encoder} (1080p @ 30fps)...")
-
     audio_duration = get_audio_duration(master_audio_path) or 64.0
     total_frames = int(audio_duration * fps)
 
@@ -599,9 +597,7 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
                 continue  
 
             h_img, w_img = img.shape[:2]
-            logo_box_y1, logo_box_y2 = int(h_img * 0.94), h_img
-            logo_box_x1, logo_box_x2 = int(w_img * 0.82), w_img
-            img[logo_box_y1:logo_box_y2, logo_box_x1:logo_box_x2] = (15, 15, 15)
+            img[int(h_img * 0.94):h_img, int(w_img * 0.82):w_img] = (15, 15, 15)
 
             orig_h, orig_w = img.shape[:2]
             aspect_target = w / float(h)
