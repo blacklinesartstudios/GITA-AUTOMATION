@@ -115,10 +115,6 @@ LAYOUT = {
     "bottom_safe_area": 140
 }
 
-SHINE_DURATION = 0.22
-GOLD_SHINE = (255, 245, 160, 255)
-GOLD_GLOW_BACK = (255, 215, 0, 180)
-
 def ffmpeg():
     return shutil.which("ffmpeg") or r"C:\ffmpeg\bin\ffmpeg.exe"
 
@@ -251,34 +247,34 @@ def measure_lines_height(draw, lines, font, line_spacing):
     total_h = sum(heights) + line_spacing * max(0, len(lines) - 1)
     return total_h, heights
 
-def compute_char_layout(lines, start_y, heights, line_spacing, font, draw, canvas_width=1080):
-    chars_info = []
+def compute_line_layouts(lines, start_y, heights, line_spacing, font, draw, canvas_width=1080):
+    lines_info = []
     cur_y = start_y
-    
-    # Corrected Devanagari grapheme cluster pattern: binds base letters, halants, and matras together
-    grapheme_pattern = re.compile(r'([\u0900-\u097F]\u094d[\u0900-\u097F]|[\u0900-\u097F][\u093e-\u094c]?|.)')
-
     for i, line in enumerate(lines):
         if not line:
             cur_y += heights[i] + line_spacing
             continue
-            
         line_bbox = draw.textbbox((0, 0), line, font=font)
         line_w = line_bbox[2] - line_bbox[0]
         start_x = (canvas_width - line_w) // 2
-        
-        chunks = grapheme_pattern.findall(line)
-        chunks = [c for c in chunks if c]
-        
-        running_text = ""
-        for chunk in chunks:
-            prefix_bbox = draw.textbbox((0, 0), running_text, font=font) if running_text else (0, 0, 0, 0)
-            prefix_w = prefix_bbox[2] - prefix_bbox[0]
-            chars_info.append({"char": chunk, "pos": (start_x + prefix_w, cur_y)})
-            running_text += chunk
-            
+        lines_info.append({"text": line, "pos": (start_x, cur_y), "width": line_w, "height": heights[i]})
         cur_y += heights[i] + line_spacing
-    return chars_info
+    return lines_info
+
+def render_progressive_reveal(draw_ctx, line_infos, current_t, start_t, end_t, font, normal_color):
+    if not line_infos:
+        return
+    total_d = max(0.1, end_t - start_t)
+    progress = max(0.0, min(1.0, (current_t - start_t) / total_d))
+    for info in line_infos:
+        x, y = info["pos"]
+        full_text = info["text"]
+        if progress >= 1.0:
+            draw_ctx.text((x, y), full_text, font=font, fill=normal_color)
+        elif progress > 0.0:
+            char_count = max(1, int(len(full_text) * progress))
+            partial_text = full_text[:char_count]
+            draw_ctx.text((x, y), partial_text, font=font, fill=normal_color)
 
 def draw_golden_lotus(draw, center_x, center_y, scale=1.0, gold_bright=(255, 230, 140, 255), gold_main=(212, 175, 86, 255), gold_dark=(140, 105, 45, 255)):
     cx, cy = center_x, center_y
@@ -333,28 +329,6 @@ def draw_3d_header(canvas_img, y_title, y_sub, title_text, sub_text, f_title, f_
     main_draw.text((s_x, y_sub), sub_text, font=f_sub, fill=gold_color, stroke_width=1, stroke_fill=(20, 20, 20, 230))
     main_draw.line([(s_x - 110, y_sub + 16), (s_x - 16, y_sub + 16)], fill=gold_color, width=2)
     main_draw.line([(s_x + s_w + 16, y_sub + 16), (s_x + s_w + 110, y_sub + 16)], fill=gold_color, width=2)
-
-def calculate_char_times(chars, start_t, end_t):
-    if not chars:
-        return []
-    weights = [2.5 if item["char"] in ("।", "॥", ".", "\n") else (1.2 if item["char"] == " " else 1.0) for item in chars]
-    total_w = sum(weights)
-    total_d = max(0.1, end_t - start_t)
-    timed, cur_t = [], start_t
-    for idx, item in enumerate(chars):
-        timed.append({"char": item["char"], "pos": item["pos"], "appear_t": cur_t})
-        cur_t += (weights[idx] / total_w) * total_d
-    return timed
-
-def render_karaoke_chars(draw_ctx, timed_chars, current_t, font, normal_color):
-    for item in timed_chars:
-        if current_t >= item["appear_t"]:
-            time_alive = current_t - item["appear_t"]
-            x, y = item["pos"]
-            if time_alive < SHINE_DURATION:
-                draw_ctx.text((x, y), item["char"], font=font, fill=GOLD_SHINE)
-            else:
-                draw_ctx.text((x, y), item["char"], font=font, fill=normal_color)
 
 def rgba_to_bgr_and_alpha(pil_img):
     arr = np.array(pil_img)
@@ -447,28 +421,27 @@ def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_au
         box1_top += shift; box1_bot += shift; box2_top += shift; box2_bot += shift; box3_top += shift; box3_bot += shift
 
     sk_start_y = box1_top + PAD_Y + badge_top_h + 22
-    sanskrit_chars_layout = compute_char_layout(sanskrit_lines, sk_start_y, sk_heights, LAYOUT["sanskrit_line_spacing"], f_sanskrit, d_m, canvas_width=w)
+    sanskrit_lines_info = compute_line_layouts(sanskrit_lines, sk_start_y, sk_heights, LAYOUT["sanskrit_line_spacing"], f_sanskrit, d_m, canvas_width=w)
     mean_start_y = box2_top + PAD_Y + m_hd_h + 18
-    meaning_chars_layout = compute_char_layout(meaning_lines, mean_start_y, mean_heights, LAYOUT["meaning_line_spacing"], f_meaning, d_m, canvas_width=w)
-    moment_chars_layout = compute_char_layout(moment_lines, box3_top + PAD_Y + mom_hd_h + 18, mom_heights, LAYOUT["moment_line_spacing"], f_moment, d_m, canvas_width=w) if moment_lines else []
+    meaning_lines_info = compute_line_layouts(meaning_lines, mean_start_y, mean_heights, LAYOUT["meaning_line_spacing"], f_meaning, d_m, canvas_width=w)
+    moment_lines_info = compute_line_layouts(moment_lines, box3_top + PAD_Y + mom_hd_h + 18, mom_heights, LAYOUT["moment_line_spacing"], f_moment, d_m, canvas_width=w) if moment_lines else []
 
-    avail_time = max(10.0, total_audio_duration - 4.0)
+    avail_time = max(8.0, total_audio_duration - 3.0)
+    sanskrit_voice_start = 1.0
+    sanskrit_voice_end = sanskrit_voice_start + max(2.5, avail_time * 0.25)
     
-    sanskrit_voice_start = 2.0
-    sanskrit_voice_end = sanskrit_voice_start + max(3.0, avail_time * 0.28)
+    narration_voice_start = sanskrit_voice_end + 0.4
     
-    narration_voice_start = sanskrit_voice_end + 0.8
+    len_mean = max(1, sum(len(inf["text"]) for inf in meaning_lines_info))
+    len_mom = max(1, sum(len(inf["text"]) for inf in moment_lines_info)) if moment_lines_info else 0
+    tot_c = len_mean + len_mom
     
-    len_mean = max(1, len(meaning_chars_layout))
-    len_mom = len(moment_chars_layout)
-    tot_c = len_mean + (len_mom if len_mom > 0 else 0)
-    
-    remaining_time = max(4.0, total_audio_duration - narration_voice_start - 2.0)
+    remaining_time = max(3.0, total_audio_duration - narration_voice_start - 1.5)
     mean_allotted = remaining_time * (len_mean / float(tot_c)) if tot_c > 0 else remaining_time
     
     meaning_voice_end = narration_voice_start + mean_allotted
-    moment_voice_start = meaning_voice_end + 0.8
-    moment_voice_end = total_audio_duration - 1.5 if len_mom > 0 else moment_voice_start
+    moment_voice_start = meaning_voice_end + 0.4
+    moment_voice_end = total_audio_duration - 1.0 if moment_lines_info else moment_voice_start
 
     border_img = draw_programmatic_gold_frame(w, h)
     border_bgr, border_alpha = rgba_to_bgr_and_alpha(border_img)
@@ -518,9 +491,12 @@ def prepare_sequential_ui(w, h, cfg_path, font_path, sans_dur, eng_dur, total_au
         "t_box2_fade_in": (sanskrit_voice_end + 0.2, sanskrit_voice_end + 0.8),
         "t_box3_fade_in": (meaning_voice_end + 0.2, meaning_voice_end + 0.8),
         "global_ui_fade_out": (max(total_audio_duration - 2.5, total_audio_duration - 3.5), total_audio_duration - 0.5),
-        "timed_sanskrit_chars": calculate_char_times(sanskrit_chars_layout, sanskrit_voice_start, sanskrit_voice_end),
-        "timed_meaning_chars": calculate_char_times(meaning_chars_layout, narration_voice_start, meaning_voice_end),
-        "timed_moment_chars": calculate_char_times(moment_chars_layout, moment_voice_start, moment_voice_end)
+        "sanskrit_lines_info": sanskrit_lines_info,
+        "sanskrit_time": (sanskrit_voice_start, sanskrit_voice_end),
+        "meaning_lines_info": meaning_lines_info,
+        "meaning_time": (narration_voice_start, meaning_voice_end),
+        "moment_lines_info": moment_lines_info,
+        "moment_time": (moment_voice_start, moment_voice_end)
     }
 
 def start_ffmpeg_process(out_path, w, h, fps, encoder_name, fast_mode=False):
@@ -555,11 +531,6 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
     fps = 24 if fast_mode else 30
 
     best_encoder = detect_best_encoder() if not fast_mode else "libx264"
-    if fast_mode:
-        print(f"  [FAST RENDER] Fast Preview Mode (1080p @ 24fps ultrafast)...")
-    else:
-        print(f"  [RENDER] Production Mode using verified encoder: {best_encoder} (1080p @ 30fps)...")
-
     audio_duration = get_audio_duration(master_audio_path) or 64.0
     total_frames = int(audio_duration * fps)
 
@@ -597,9 +568,7 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
                 continue  
 
             h_img, w_img = img.shape[:2]
-            logo_box_y1, logo_box_y2 = int(h_img * 0.94), h_img
-            logo_box_x1, logo_box_x2 = int(w_img * 0.82), w_img
-            img[logo_box_y1:logo_box_y2, logo_box_x1:logo_box_x2] = (15, 15, 15)
+            img[int(h_img * 0.94):h_img, int(w_img * 0.82):w_img] = (15, 15, 15)
 
             orig_h, orig_w = img.shape[:2]
             aspect_target = w / float(h)
@@ -709,9 +678,17 @@ def render_master_video(images, out, master_audio_path, bg_music_path=None, w=10
 
                     text_overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
                     d_txt = ImageDraw.Draw(text_overlay)
-                    render_karaoke_chars(d_txt, ui["timed_sanskrit_chars"], current_time_sec, ui["f_sanskrit"], ui["CREAM_WHITE"])
-                    render_karaoke_chars(d_txt, ui["timed_meaning_chars"], current_time_sec, ui["f_meaning"], ui["BODY_WHITE"])
-                    render_karaoke_chars(d_txt, ui["timed_moment_chars"], current_time_sec, ui["f_moment"], ui["BODY_WHITE"])
+                    
+                    # Progressive reveal renders lines smoothly without breaking Devanagari shaping
+                    s_st, s_en = ui["sanskrit_time"]
+                    render_progressive_reveal(d_txt, ui["sanskrit_lines_info"], current_time_sec, s_st, s_en, ui["f_sanskrit"], ui["CREAM_WHITE"])
+                    
+                    m_st, m_en = ui["meaning_time"]
+                    render_progressive_reveal(d_txt, ui["meaning_lines_info"], current_time_sec, m_st, m_en, ui["f_meaning"], ui["BODY_WHITE"])
+                    
+                    if ui["moment_lines_info"]:
+                        mom_st, mom_en = ui["moment_time"]
+                        render_progressive_reveal(d_txt, ui["moment_lines_info"], current_time_sec, mom_st, mom_en, ui["f_moment"], ui["BODY_WHITE"])
 
                     txt_np = np.array(text_overlay)
                     txt_bgr = cv2.cvtColor(txt_np, cv2.COLOR_RGBA2BGR).astype(np.float32)
