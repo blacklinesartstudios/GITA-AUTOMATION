@@ -3,7 +3,7 @@ name: Bhagavad Gita YouTube Automation
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 4 * * *' # Executes daily at 04:00 UTC (09:30 AM IST)
+    - cron: '0 4,16 * * *' # Executes twice daily at 04:00 UTC and 16:00 UTC
 
 permissions:
   contents: write
@@ -62,6 +62,13 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Randomize Upload Timing (Anti-Bot Fingerprint)
+        run: |
+          # Generates a random sleep delay between 0 and 2700 seconds (0 to 45 minutes)
+          DELAY=$((RANDOM % 2700))
+          echo "Randomizing schedule: Sleeping for $((DELAY / 60)) minutes before publishing..."
+          sleep $DELAY
 
       - name: Run Master Script
         env:
