@@ -118,10 +118,10 @@ jobs:
           TAG_NAME="archive-$(date +'%Y%m%d-%H%M%S')"
           gh release create "$TAG_NAME" output/*.mp4 --title "Gita Video Backup ($TAG_NAME)" --notes "Permanent off-site archive of generated video by Blacklines Art Studios." || echo "Backup uploaded"
 
-      - name: Auto-Save New Depth Maps & Progress to GitHub
+      - name: Commit Verse Progression Tracker
         if: success()
         run: |
           git config --global user.name "Gita-Bot"
           git config --global user.email "bot@blacklinesart.com"
-          git add depth/ tracker.json narration.txt 2>/dev/null || true
-          git diff --staged --quiet || (git commit -m "Auto-save new depth maps and verse tracker [skip ci]" && git push origin main)
+          git add verse_tracker.json depth/ || true
+          git diff --staged --quiet || (git commit -m "Auto-save tracker progression [skip ci]" && git pull --rebase origin main && git push origin main)
