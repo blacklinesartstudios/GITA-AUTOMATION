@@ -279,3 +279,12 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
 
 upload_to_youtube = upload_short_to_youtube
 upload_video = upload_short_to_youtube
+
+if __name__ == "__main__":
+    print("🚀 [UPLOADER CLI] Starting standalone upload execution...")
+    try:
+        url = upload_short_to_youtube()
+        print(f"✅ [SUCCESS] Upload complete: {url}")
+    except Exception as e:
+        print(f"❌ [CRITICAL UPLOAD ERROR]: {e}")
+        sys.exit(1)
