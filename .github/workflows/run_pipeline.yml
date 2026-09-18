@@ -92,8 +92,8 @@ jobs:
 
       - name: Randomize Upload Timing (Anti-Bot Fingerprint)
         run: |
-          # Sleep for a random time between 0 and 15 minutes to act human
-          DELAY=$((RANDOM % 900))
+          # Sleep for a random time between 0 and 60 minutes to act human
+          DELAY=$((RANDOM % 3600))
           echo "Sleeping for $((DELAY / 60)) minutes before starting..."
           sleep $DELAY
 
