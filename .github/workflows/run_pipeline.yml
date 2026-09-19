@@ -2,11 +2,8 @@ name: Bhagavad Gita YouTube Automation
 
 on:
   schedule:
-    # 6:00 AM IST (00:30 UTC)
     - cron: '30 0 * * *'
-    # 1:00 PM IST (07:30 UTC)
     - cron: '30 7 * * *'
-    # 7:00 PM IST (13:30 UTC)
     - cron: '30 13 * * *'
   workflow_dispatch: 
 
@@ -43,10 +40,8 @@ jobs:
           YOUTUBE_TOKEN_JSON: ${{ secrets.YOUTUBE_TOKEN_JSON }}
           CLIENT_SECRETS_JSON: ${{ secrets.CLIENT_SECRETS_JSON }}
         run: |
-          # 1. Run the engine to generate AI metadata, voice, and video
-          python engine/master_engine.py
-          
-          # 2. Upload video as Private and schedule random YouTube publish time
+          # Runs MASTER.py from the main folder, then uploader.py from the engine folder
+          python MASTER.py
           python engine/uploader.py
 
       - name: Commit Verse Progression Tracker
@@ -54,8 +49,5 @@ jobs:
         run: |
           git config --global user.name "Gita-Bot"
           git config --global user.email "bot@blacklinesart.com"
-          
-          # Scans root and cache folders for JSON trackers so it never misses progress
           git add *.json cache/*.json depth/ 2>/dev/null || true
-          
           git diff --staged --quiet || (git commit -m "Auto-save tracker progression [skip ci]" && git pull --rebase origin main && git push origin main)
