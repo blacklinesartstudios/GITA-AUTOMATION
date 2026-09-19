@@ -2,6 +2,8 @@ import os
 import sys
 import json
 import time
+import random
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -133,7 +135,6 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
     description = kwargs.get("description")
     tags = kwargs.get("tags")
     category_id = kwargs.get("category_id", "27")
-    privacy_status = kwargs.get("privacy_status", "public")
     playlist_name = kwargs.get("playlist_name", "Bhagavad Gita • English Edition")
 
     # 1. Exhaustive scan of positional arguments
@@ -151,10 +152,9 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
                 elif (project_root / p).exists():
                     video_path = project_root / p
 
-    # 2. Auto-discover JSON config if still missing (FIXED FOR TRACKER CRASH)
+    # 2. Auto-discover JSON config if still missing (IGNORES TRACKER FILES)
     if not json_path or not Path(json_path).exists():
         all_jsons = list(project_root.glob("cache/**/*.json")) + list(project_root.glob("*.json"))
-        # STRICT RULE: Ignore tracker and auth files so it only grabs the AI metadata
         valid_jsons = [p for p in all_jsons if p.name not in ["verse_tracker.json", "tracker.json", "token.json", "client_secrets.json"]]
         
         json_candidates = sorted(valid_jsons, key=os.path.getmtime, reverse=True)
@@ -231,6 +231,14 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
 
     youtube = get_authenticated_service(project_root)
 
+    # Generate a random delay between 15 and 60 minutes for YouTube to publish it organically
+    random_minutes = random.randint(15, 60)
+    publish_time = datetime.now(timezone.utc) + timedelta(minutes=random_minutes)
+    publish_at_str = publish_time.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+
+    print(f"  [SCHEDULER] GitHub will upload instantly.")
+    print(f"  [SCHEDULER] YouTube will randomly publish the video at: {publish_at_str}")
+
     body = {
         "snippet": {
             "title": str(title)[:100],
@@ -239,7 +247,8 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
             "categoryId": str(category_id)
         },
         "status": {
-            "privacyStatus": privacy_status,
+            "privacyStatus": "private",         
+            "publishAt": publish_at_str,        
             "selfDeclaredMadeForKids": False
         }
     }
@@ -272,7 +281,7 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
 
     video_id = response.get("id")
     video_url = f"https://youtu.be/{video_id}"
-    print(f"  ✓ Video published live: {video_url}")
+    print(f"  ✓ Video uploaded to YouTube backend: {video_url}")
 
     if playlist_name:
         playlist_id = get_or_create_playlist(youtube, playlist_name)
@@ -284,12 +293,11 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
 upload_to_youtube = upload_short_to_youtube
 upload_video = upload_short_to_youtube
 
-# THE TRIGGER BLOCK (Executes the code in CI)
 if __name__ == "__main__":
     print("🚀 [UPLOADER CLI] Starting standalone upload execution...")
     try:
         url = upload_short_to_youtube()
-        print(f"✅ [SUCCESS] Upload complete: {url}")
+        print(f"✅ [SUCCESS] Upload complete and scheduled! URL: {url}")
     except Exception as e:
         print(f"❌ [CRITICAL UPLOAD ERROR]: {e}")
         sys.exit(1)
