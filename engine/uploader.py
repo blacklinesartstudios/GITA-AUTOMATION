@@ -151,9 +151,13 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
                 elif (project_root / p).exists():
                     video_path = project_root / p
 
-    # 2. Auto-discover JSON config if still missing
+    # 2. Auto-discover JSON config if still missing (FIXED FOR TRACKER CRASH)
     if not json_path or not Path(json_path).exists():
-        json_candidates = sorted(list(project_root.glob("cache/**/*.json")) + list(project_root.glob("*.json")), key=os.path.getmtime, reverse=True)
+        all_jsons = list(project_root.glob("cache/**/*.json")) + list(project_root.glob("*.json"))
+        # STRICT RULE: Ignore tracker and auth files so it only grabs the AI metadata
+        valid_jsons = [p for p in all_jsons if p.name not in ["verse_tracker.json", "tracker.json", "token.json", "client_secrets.json"]]
+        
+        json_candidates = sorted(valid_jsons, key=os.path.getmtime, reverse=True)
         if json_candidates:
             json_path = json_candidates[0]
             print(f"  [UPLOADER] Auto-discovered config JSON: {json_path}")
@@ -280,6 +284,7 @@ def upload_short_to_youtube(*args, **kwargs) -> str:
 upload_to_youtube = upload_short_to_youtube
 upload_video = upload_short_to_youtube
 
+# THE TRIGGER BLOCK (Executes the code in CI)
 if __name__ == "__main__":
     print("🚀 [UPLOADER CLI] Starting standalone upload execution...")
     try:
